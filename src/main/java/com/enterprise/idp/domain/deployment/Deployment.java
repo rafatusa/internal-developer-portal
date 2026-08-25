@@ -13,6 +13,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -39,7 +40,9 @@ import java.time.Instant;
 public class Deployment {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "deployments_gen")
+    @SequenceGenerator(name = "deployments_gen", sequenceName = "deployments_seq",
+        allocationSize = 50)
     private Long id;
 
     @Column(name = "version", nullable = false, length = 50)

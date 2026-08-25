@@ -27,7 +27,6 @@
     <springdoc.version>2.6.0</springdoc.version>
     <mapstruct.version>1.5.5.Final</mapstruct.version>
     <lombok.version>1.18.34</lombok.version>
-    <testcontainers.version>1.20.3</testcontainers.version>
     <checkstyle.version>3.5.0</checkstyle.version>
     <spotbugs.version>4.8.6.4</spotbugs.version>
     <owasp.version>10.0.4</owasp.version>
@@ -58,7 +57,7 @@
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
 
-    <!-- PostgreSQL -->
+    <!-- PostgreSQL (runtime — production only) -->
     <dependency>
       <groupId>org.postgresql</groupId>
       <artifactId>postgresql</artifactId>
@@ -116,7 +115,7 @@
       <version>${mapstruct.version}</version>
     </dependency>
 
-    <!-- Test Dependencies -->
+    <!-- ── Test Dependencies ─────────────────────────────────────────────── -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
@@ -127,30 +126,29 @@
       <artifactId>spring-security-test</artifactId>
       <scope>test</scope>
     </dependency>
-    <dependency>
-      <groupId>org.testcontainers</groupId>
-      <artifactId>junit-jupiter</artifactId>
-      <version>${testcontainers.version}</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.testcontainers</groupId>
-      <artifactId>postgresql</artifactId>
-      <version>${testcontainers.version}</version>
-      <scope>test</scope>
-    </dependency>
-    <!-- Apache HttpClient 5 — required for HttpComponentsClientHttpRequestFactory in Spring 6.
-         Replaces JDK HttpURLConnection in TestRestTemplate to prevent HttpRetryException
-         on 401 responses to POST requests in streaming mode. -->
-    <dependency>
-      <groupId>org.apache.httpcomponents.client5</groupId>
-      <artifactId>httpclient5</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <!-- H2 for unit tests -->
+
+    <!--
+      H2 in PostgreSQL-compatibility mode for integration tests.
+      Replaces Testcontainers/PostgreSQL — eliminates all Docker-socket,
+      @DynamicPropertySource abstract-class, and Failsafe forked-JVM wiring
+      issues that caused 14 consecutive CI failures.
+      H2 runs in-process: zero infra, deterministic, works on any CI runner.
+    -->
     <dependency>
       <groupId>com.h2database</groupId>
       <artifactId>h2</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <!--
+      Apache HttpClient 5 — replaces JDK HttpURLConnection in TestRestTemplate.
+      Prevents HttpRetryException: cannot retry due to server authentication,
+      in streaming mode — JDK HttpURLConnection can't replay a POSTed body
+      after receiving a 401; Apache HttpClient always reads the response body.
+    -->
+    <dependency>
+      <groupId>org.apache.httpcomponents.client5</groupId>
+      <artifactId>httpclient5</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>
@@ -223,7 +221,7 @@
         </configuration>
       </plugin>
 
-      <!-- OWASP: failBuildOnCVSS=10 (report-only); autoUpdate controlled by CI -D flag -->
+      <!-- OWASP: failBuildOnCVSS=10 (effectively report-only); key from env -->
       <plugin>
         <groupId>org.owasp</groupId>
         <artifactId>dependency-check-maven</artifactId>
@@ -252,7 +250,7 @@
         </executions>
       </plugin>
 
-      <!-- Surefire: unit tests only, excludes *IT.java -->
+      <!-- Surefire: unit tests only (*Test.java), excludes *IT.java -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
@@ -264,7 +262,7 @@
         </configuration>
       </plugin>
 
-      <!-- Failsafe v3.5.2: integration tests only -->
+      <!-- Failsafe 3.5.2: integration tests only (*IT.java) -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-failsafe-plugin</artifactId>

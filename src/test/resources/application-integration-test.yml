@@ -1,23 +1,28 @@
-# Integration-test profile — loaded by @ActiveProfiles("integration-test") in BaseIntegrationTest.
-#
-# @ServiceConnection on the static PostgreSQLContainer wires the Testcontainers-assigned
-# JDBC URL, username, password and driver into Spring Boot's DataSource AND Flyway
-# auto-configuration before the context starts.
-
 spring:
+  datasource:
+    url: jdbc:h2:mem:idptest;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;NON_KEYWORDS=value;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
   jpa:
     hibernate:
-      ddl-auto: validate
+      ddl-auto: none
+    database-platform: org.hibernate.dialect.H2Dialect
     show-sql: false
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
 
   flyway:
     enabled: true
     locations: classpath:db/migration
-    baseline-on-migrate: false
-    validate-on-migrate: true
+    baseline-on-migrate: true
+    validate-on-migrate: false
+    url: jdbc:h2:mem:idptest;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;NON_KEYWORDS=value;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    user: sa
+    password: ""
+
+  h2:
+    console:
+      enabled: false
 
 server:
   port: 0
@@ -37,21 +42,17 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
 
-# JWT — 80 pure alphanumeric chars = 80 bytes, safely above the 64-byte HS512 minimum.
 app:
   jwt:
-    secret: "integrationtestjwtsigningsecretforhs512algorithmmustbeatleast64byteslong1234567890ab"
+    secret: integrationtestjwtsigningsecretforhs512algorithmmustbeatleast64byteslongabcdefgh
     expiration-ms: 3600000
     refresh-expiration-ms: 7200000
   security:
-    # BCrypt cost 4 (~5ms/hash) instead of production cost 12 (~300ms/hash).
-    # Prevents Tomcat 60s request timeout when register+login each do
-    # multiple encode/matches calls in @BeforeEach on slow CI runners.
     bcrypt-strength: 4
 
+# Keep logging at ERROR to avoid the Spring conditions report flooding the output
+# and truncating the actual test failure messages in the sandbox.
 logging:
   level:
-    root: WARN
-    com.enterprise.idp: INFO
-    org.flywaydb: INFO
-    org.testcontainers: INFO
+    root: ERROR
+    com.enterprise.idp: WARN
