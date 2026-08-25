@@ -1,30 +1,29 @@
 -- V1: Initial Schema for Internal Developer Portal
--- Author: IDP Platform
--- Description: Creates all core tables
+-- Columns match JPA entity field mappings exactly (Hibernate validate mode).
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ─── Teams ────────────────────────────────────────────────────────────────────
 CREATE TABLE teams (
     id                 BIGSERIAL PRIMARY KEY,
-    name               VARCHAR(100) NOT NULL UNIQUE,
-    description        TEXT,
-    email_distribution VARCHAR(255),
+    name               VARCHAR(100)  NOT NULL UNIQUE,
+    description        VARCHAR(500),
     slack_channel      VARCHAR(100),
-    created_at         TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at         TIMESTAMP NOT NULL DEFAULT NOW()
+    email_distribution VARCHAR(255),
+    member_count       INTEGER       NOT NULL DEFAULT 0,
+    created_at         TIMESTAMP     NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMP     NOT NULL DEFAULT NOW()
 );
 
 -- ─── Users ────────────────────────────────────────────────────────────────────
 CREATE TABLE app_users (
     id           BIGSERIAL PRIMARY KEY,
     username     VARCHAR(50)  NOT NULL UNIQUE,
-    email        VARCHAR(255) NOT NULL UNIQUE,
     password     VARCHAR(255) NOT NULL,
-    full_name    VARCHAR(150),
+    email        VARCHAR(100) NOT NULL UNIQUE,
+    full_name    VARCHAR(100),
     role         VARCHAR(20)  NOT NULL DEFAULT 'DEVELOPER',
     enabled      BOOLEAN      NOT NULL DEFAULT TRUE,
-    team_id      BIGINT REFERENCES teams(id) ON DELETE SET NULL,
     created_at   TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMP    NOT NULL DEFAULT NOW()
 );
@@ -33,10 +32,10 @@ CREATE TABLE app_users (
 CREATE TABLE projects (
     id          BIGSERIAL PRIMARY KEY,
     name        VARCHAR(100) NOT NULL UNIQUE,
-    description TEXT,
+    description VARCHAR(500),
     status      VARCHAR(20)  NOT NULL DEFAULT 'ACTIVE',
-    repo_url    VARCHAR(500),
-    tech_stack  VARCHAR(255),
+    repo_url    VARCHAR(255),
+    tech_stack  VARCHAR(200),
     team_id     BIGINT REFERENCES teams(id) ON DELETE SET NULL,
     created_at  TIMESTAMP    NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMP    NOT NULL DEFAULT NOW()
@@ -44,30 +43,34 @@ CREATE TABLE projects (
 
 -- ─── Environments ─────────────────────────────────────────────────────────────
 CREATE TABLE environments (
-    id          BIGSERIAL PRIMARY KEY,
-    name        VARCHAR(100) NOT NULL,
-    type        VARCHAR(20)  NOT NULL DEFAULT 'DEVELOPMENT',
-    base_url    VARCHAR(500),
-    description TEXT,
-    project_id  BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMP NOT NULL DEFAULT NOW(),
-    CONSTRAINT uq_env_name_project UNIQUE (name, project_id)
+    id            BIGSERIAL PRIMARY KEY,
+    name          VARCHAR(50)  NOT NULL,
+    type          VARCHAR(20)  NOT NULL DEFAULT 'DEVELOPMENT',
+    url           VARCHAR(255),
+    cloud_provider VARCHAR(50),
+    region        VARCHAR(50),
+    is_protected  BOOLEAN      NOT NULL DEFAULT FALSE,
+    project_id    BIGINT       NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    created_at    TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMP    NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_env_name_project UNIQUE (project_id, name)
 );
 
 -- ─── Deployments ──────────────────────────────────────────────────────────────
 CREATE TABLE deployments (
     id             BIGSERIAL PRIMARY KEY,
-    version        VARCHAR(100) NOT NULL,
-    status         VARCHAR(20)  NOT NULL DEFAULT 'PENDING',
-    artifact_url   VARCHAR(500),
-    notes          TEXT,
-    deployed_at    TIMESTAMP,
-    project_id     BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    environment_id BIGINT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
-    deployed_by_id BIGINT REFERENCES app_users(id) ON DELETE SET NULL,
-    created_at     TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at     TIMESTAMP NOT NULL DEFAULT NOW()
+    version        VARCHAR(50)   NOT NULL,
+    status         VARCHAR(20)   NOT NULL DEFAULT 'PENDING',
+    commit_sha     VARCHAR(40),
+    deployed_by    VARCHAR(50),
+    pipeline_url   VARCHAR(255),
+    notes          VARCHAR(1000),
+    started_at     TIMESTAMP,
+    completed_at   TIMESTAMP,
+    project_id     BIGINT        NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    environment_id BIGINT        NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+    created_at     TIMESTAMP     NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMP     NOT NULL DEFAULT NOW()
 );
 
 -- ─── Indexes ──────────────────────────────────────────────────────────────────
@@ -77,4 +80,3 @@ CREATE INDEX idx_environments_proj  ON environments(project_id);
 CREATE INDEX idx_deployments_proj   ON deployments(project_id);
 CREATE INDEX idx_deployments_env    ON deployments(environment_id);
 CREATE INDEX idx_deployments_status ON deployments(status);
-CREATE INDEX idx_users_team         ON app_users(team_id);
