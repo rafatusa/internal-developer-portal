@@ -62,8 +62,13 @@ springdoc:
 app:
   jwt:
     secret: ${JWT_SECRET:your-very-long-secret-key-must-be-at-least-256-bits-for-hs256-algorithm}
-    expiration-ms: 86400000  # 24 hours
-    refresh-expiration-ms: 604800000  # 7 days
+    expiration-ms: 86400000
+    refresh-expiration-ms: 604800000
+  security:
+    # BCrypt cost factor. Production: 12 (~300ms/hash — brute-force resistant).
+    # Integration tests override to 4 (~5ms/hash) via application-integration-test.yml
+    # to avoid Tomcat 60s request timeout on slow CI runners.
+    bcrypt-strength: 12
 
 info:
   app:

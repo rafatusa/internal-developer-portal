@@ -3,6 +3,7 @@ package com.enterprise.idp.config;
 import com.enterprise.idp.security.JwtAuthenticationEntryPoint;
 import com.enterprise.idp.security.JwtAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -23,6 +24,10 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 
 /**
  * Spring Security configuration with JWT stateless authentication.
+ *
+ * <p>BCrypt strength is configurable via {@code app.security.bcrypt-strength} (default 12).
+ * Integration tests set it to 4 in application-integration-test.yml to avoid the
+ * ~300ms/hash cost at factor 12 triggering Tomcat 60s request timeouts on slow CI runners.
  */
 @Configuration
 @EnableWebSecurity
@@ -33,6 +38,9 @@ public class SecurityConfig {
     private final JwtAuthenticationFilter jwtAuthFilter;
     private final UserDetailsService userDetailsService;
     private final JwtAuthenticationEntryPoint jwtAuthEntryPoint;
+
+    @Value("${app.security.bcrypt-strength:12}")
+    private int bcryptStrength;
 
     /** Security filter chain with JWT authentication. */
     @Bean
@@ -71,10 +79,14 @@ public class SecurityConfig {
         return provider;
     }
 
-    /** BCrypt password encoder. */
+    /**
+     * BCrypt password encoder.
+     * Strength is read from {@code app.security.bcrypt-strength} — defaults to 12 (production).
+     * Set to 4 in application-integration-test.yml for fast test execution.
+     */
     @Bean
     public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder(12);
+        return new BCryptPasswordEncoder(bcryptStrength);
     }
 
     /** Authentication manager bean. */

@@ -1,13 +1,8 @@
 # Integration-test profile — loaded by @ActiveProfiles("integration-test") in BaseIntegrationTest.
 #
-# Datasource coordinates are NOT declared here.
-# @ServiceConnection on the static PostgreSQLContainer in BaseIntegrationTest
-# wires the Testcontainers-assigned JDBC URL, username, password, and driver
-# into Spring Boot's DataSource AND Flyway auto-configuration before the
-# context starts — overriding any spring.datasource.* from application.yml.
-#
-# spring-boot-testcontainers artifact is on the test classpath (pom.xml) which
-# provides the @ServiceConnection annotation.
+# @ServiceConnection on the static PostgreSQLContainer wires the Testcontainers-assigned
+# JDBC URL, username, password and driver into Spring Boot's DataSource AND Flyway
+# auto-configuration before the context starts.
 
 spring:
   jpa:
@@ -42,13 +37,17 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
 
-# JWT — HS512 requires exactly 64+ bytes.
-# 80 pure alphanumeric chars = 80 bytes. No special chars, no YAML escape issues.
+# JWT — 80 pure alphanumeric chars = 80 bytes, safely above the 64-byte HS512 minimum.
 app:
   jwt:
     secret: "integrationtestjwtsigningsecretforhs512algorithmmustbeatleast64byteslong1234567890ab"
     expiration-ms: 3600000
     refresh-expiration-ms: 7200000
+  security:
+    # BCrypt cost 4 (~5ms/hash) instead of production cost 12 (~300ms/hash).
+    # Prevents Tomcat 60s request timeout when register+login each do
+    # multiple encode/matches calls in @BeforeEach on slow CI runners.
+    bcrypt-strength: 4
 
 logging:
   level:
