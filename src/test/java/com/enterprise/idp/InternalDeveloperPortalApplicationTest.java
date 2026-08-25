@@ -5,6 +5,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.TestPropertySource;
 
+/**
+ * Smoke test — verifies the Spring application context loads successfully.
+ */
 @SpringBootTest
 @TestPropertySource(properties = {
     "spring.datasource.url=jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE",
@@ -13,8 +16,9 @@ import org.springframework.test.context.TestPropertySource;
     "spring.datasource.password=",
     "spring.jpa.hibernate.ddl-auto=create-drop",
     "spring.flyway.enabled=false",
-    // HS512 requires ≥ 64 bytes — WeakKeyException crashes the context if shorter
-    "app.jwt.secret=unit-test-jwt-secret-key-exactly-64-characters-long-for-hs512-ok!",
+    "spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.H2Dialect",
+    // HS512 requires >= 64 bytes — 80 alphanumeric chars, no special characters
+    "app.jwt.secret=contextloadsmoketestjwtsecretkeyforhs512algorithmexactlyeightycharacterslong1234",
     "app.jwt.expiration-ms=86400000",
     "app.jwt.refresh-expiration-ms=604800000"
 })
@@ -24,6 +28,6 @@ class InternalDeveloperPortalApplicationTest {
     @Test
     @DisplayName("Spring context loads without errors")
     void contextLoads() {
-        // If the context fails to load, this test fails — intentionally minimal.
+        // If the context fails to load, this test fails automatically.
     }
 }

@@ -1,9 +1,13 @@
 # Integration-test profile — loaded by @ActiveProfiles("integration-test") in BaseIntegrationTest.
 #
-# Datasource coordinates are NOT set here — @ServiceConnection on the @Container in
-# BaseIntegrationTest wires the Testcontainers PostgreSQL URL/user/password directly into
-# ALL Spring Boot auto-configuration (DataSource AND Flyway) before the context starts.
-# Setting them here would be overridden anyway, but omitting them avoids any ordering race.
+# Datasource coordinates are NOT declared here.
+# @ServiceConnection on the static PostgreSQLContainer in BaseIntegrationTest
+# wires the Testcontainers-assigned JDBC URL, username, password, and driver
+# into Spring Boot's DataSource AND Flyway auto-configuration before the
+# context starts — overriding any spring.datasource.* from application.yml.
+#
+# spring-boot-testcontainers artifact is on the test classpath (pom.xml) which
+# provides the @ServiceConnection annotation.
 
 spring:
   jpa:
@@ -21,7 +25,7 @@ spring:
     validate-on-migrate: true
 
 server:
-  port: 0   # random port — @LocalServerPort picks it up
+  port: 0
 
 management:
   endpoints:
@@ -38,16 +42,17 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
 
-# JWT — HS512 requires >= 64 bytes (512 bits).
-# This secret is exactly 88 characters = 88 bytes (ASCII) — safely above the 64-byte minimum.
+# JWT — HS512 requires exactly 64+ bytes.
+# 80 pure alphanumeric chars = 80 bytes. No special chars, no YAML escape issues.
 app:
   jwt:
-    secret: "integration-test-jwt-signing-secret-for-hs512-algorithm-must-be-at-least-64-bytes-long!!"
-    expiration-ms: 3600000          # 1 hour — short for tests
-    refresh-expiration-ms: 7200000  # 2 hours
+    secret: "integrationtestjwtsigningsecretforhs512algorithmmustbeatleast64byteslong1234567890ab"
+    expiration-ms: 3600000
+    refresh-expiration-ms: 7200000
 
 logging:
   level:
     root: WARN
     com.enterprise.idp: INFO
     org.flywaydb: INFO
+    org.testcontainers: INFO

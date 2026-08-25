@@ -17,7 +17,7 @@ spring:
         dialect: org.hibernate.dialect.H2Dialect
 
   flyway:
-    enabled: false   # Flyway uses PostgreSQL DDL; H2 schema is created by Hibernate create-drop
+    enabled: false
 
 server:
   port: 0
@@ -28,11 +28,11 @@ management:
       exposure:
         include: health
 
-# JWT — HS512 requires >= 64 bytes (512 bits).
-# This secret is 88 characters = 88 bytes (ASCII) — safely above the 64-byte minimum.
+# JWT — HS512 requires exactly 64+ bytes.
+# Secret below is 80 alphanumeric chars = 80 bytes — no special chars.
 app:
   jwt:
-    secret: "unit-test-jwt-signing-secret-key-for-hs512-algorithm-which-needs-64-bytes-minimum-here!!"
+    secret: "unittestjwtsigningsecretkeyforhs512algorithmwhichneeds64bytesminimumrightnow123456"
     expiration-ms: 3600000
     refresh-expiration-ms: 7200000
 
