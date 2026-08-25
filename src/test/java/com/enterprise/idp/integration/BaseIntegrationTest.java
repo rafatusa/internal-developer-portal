@@ -2,6 +2,7 @@ package com.enterprise.idp.integration;
 
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -10,10 +11,18 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Base class for all integration tests.
- * Spins up a real PostgreSQL container via Testcontainers.
- * JWT secret is ≥ 64 bytes (required for HS512 — Keys.hmacShaKeyFor throws WeakKeyException below this).
+ *
+ * <p>Profile "integration-test" loads application-integration-test.yml which sets:
+ * - flyway.enabled=true
+ * - jpa.hibernate.ddl-auto=validate
+ * - A 64-char JWT secret (HS512 minimum)
+ * - refresh-expiration-ms
+ *
+ * <p>@DynamicPropertySource then overrides ONLY the datasource connection coordinates
+ * with the real Testcontainers PostgreSQL port/host (which isn't known until container starts).
  */
 @Testcontainers
+@ActiveProfiles("integration-test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 public abstract class BaseIntegrationTest {
 
@@ -28,18 +37,12 @@ public abstract class BaseIntegrationTest {
             .withPassword("testpassword");
 
     @DynamicPropertySource
-    static void configureProperties(DynamicPropertyRegistry registry) {
+    static void overrideDataSourceWithTestcontainers(DynamicPropertyRegistry registry) {
+        // Only the JDBC URL/user/password need to be dynamic — the container's port is random.
+        // All other config (JWT secret, Flyway, JPA) comes from application-integration-test.yml.
         registry.add("spring.datasource.url",      POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
         registry.add("spring.datasource.password", POSTGRES::getPassword);
-        registry.add("spring.flyway.enabled",      () -> "true");
-        registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
-        // HS512 minimum key length is 64 bytes (512 bits) — shorter keys throw WeakKeyException
-        // and crash ApplicationContext before any test executes.
-        registry.add("app.jwt.secret", () ->
-            "integration-test-jwt-secret-key-exactly-64-chars-long-for-hs512x");
-        registry.add("app.jwt.expiration-ms",         () -> "86400000");
-        registry.add("app.jwt.refresh-expiration-ms", () -> "604800000");
     }
 
     protected String baseUrl() {

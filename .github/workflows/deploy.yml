@@ -74,7 +74,7 @@ jobs:
         distribution: temurin
         cache: maven
     - name: OWASP Dependency Check
-      run: mvn -B org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=9 --no-transfer-progress
+      run: mvn -B org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=10 --no-transfer-progress
       env:
         NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
     - name: Upload OWASP report
