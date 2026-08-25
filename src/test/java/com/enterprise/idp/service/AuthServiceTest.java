@@ -32,6 +32,13 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/**
+ * Unit tests for AuthService.
+ *
+ * <p>register() no longer calls authenticationManager.authenticate() internally —
+ * it builds the Authentication object directly from the saved entity to avoid the
+ * @Transactional / child-transaction race with UserDetailsService. Tests reflect this.
+ */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("AuthService Unit Tests")
 class AuthServiceTest {
@@ -68,22 +75,22 @@ class AuthServiceTest {
     @Test
     @DisplayName("register() — creates user and returns accessToken with the requested username")
     void register_success() {
-        // AuthService.register() builds the AuthResponse from the local user object it constructs
-        // (not from the save() return value), so the username in the response matches the request.
+        // register() builds Authentication directly from the saved entity (no authManager call).
+        // authenticationManager mock is NOT stubbed here — Mockito strict mode would reject it.
         RegisterRequest req = new RegisterRequest();
         req.setUsername("newuser");
         req.setEmail("new@enterprise.com");
         req.setPassword("SecurePass123");
         req.setFullName("New User");
 
-        Authentication auth = mock(Authentication.class);
         when(userRepository.existsByUsername("newuser")).thenReturn(false);
         when(userRepository.existsByEmail("new@enterprise.com")).thenReturn(false);
         when(passwordEncoder.encode(anyString())).thenReturn("hashed");
         when(userRepository.save(any(AppUser.class))).thenReturn(existingUser);
-        when(authenticationManager.authenticate(any(UsernamePasswordAuthenticationToken.class)))
-            .thenReturn(auth);
-        when(jwtTokenProvider.generateAccessToken(auth)).thenReturn("access.token.value");
+        // register() calls generateAccessToken(any Authentication) — the internal
+        // UsernamePasswordAuthenticationToken it builds is an Authentication instance.
+        when(jwtTokenProvider.generateAccessToken(any(Authentication.class)))
+            .thenReturn("access.token.value");
         when(jwtTokenProvider.generateRefreshToken(anyString())).thenReturn("refresh.token.value");
 
         AuthResponse response = authService.register(req);
