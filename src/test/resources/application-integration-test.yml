@@ -1,19 +1,11 @@
 # Integration-test profile — loaded by @ActiveProfiles("integration-test") in BaseIntegrationTest.
-# The datasource URL/username/password are overridden at runtime by @DynamicPropertySource
-# with the actual Testcontainers PostgreSQL coordinates. Everything else is static here.
+#
+# Datasource coordinates are NOT set here — @ServiceConnection on the @Container in
+# BaseIntegrationTest wires the Testcontainers PostgreSQL URL/user/password directly into
+# ALL Spring Boot auto-configuration (DataSource AND Flyway) before the context starts.
+# Setting them here would be overridden anyway, but omitting them avoids any ordering race.
 
 spring:
-  datasource:
-    # Placeholder — overridden by @DynamicPropertySource before the context starts
-    url: jdbc:postgresql://localhost:5432/idpdb_test
-    username: idpuser
-    password: testpassword
-    driver-class-name: org.postgresql.Driver
-    hikari:
-      maximum-pool-size: 5
-      minimum-idle: 1
-      connection-timeout: 30000
-
   jpa:
     hibernate:
       ddl-auto: validate
