@@ -4,8 +4,6 @@ import com.enterprise.idp.dto.auth.LoginRequest;
 import com.enterprise.idp.dto.auth.RegisterRequest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
@@ -16,15 +14,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Integration tests for AuthController.
- *
- * <p>All tests register their own users so there is no dependency on the seeded
- * bcrypt admin hash — avoids HttpRetryException when login fails silently.
+ * TestRestTemplate and baseUrl() are inherited from BaseIntegrationTest.
  */
 @DisplayName("AuthController Integration Tests")
 class AuthControllerIT extends BaseIntegrationTest {
-
-    @Autowired
-    private TestRestTemplate restTemplate;
 
     private String uniqueUsername() {
         return "authit_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
@@ -55,7 +48,6 @@ class AuthControllerIT extends BaseIntegrationTest {
         String username = uniqueUsername();
         String password = "LoginPass456abc";
 
-        // Register first
         RegisterRequest register = new RegisterRequest();
         register.setUsername(username);
         register.setEmail(username + "@enterprise.com");
@@ -63,7 +55,6 @@ class AuthControllerIT extends BaseIntegrationTest {
         register.setFullName("Login Test User");
         restTemplate.postForEntity(baseUrl() + "/api/v1/auth/register", register, Map.class);
 
-        // Then login
         LoginRequest login = new LoginRequest();
         login.setUsername(username);
         login.setPassword(password);
@@ -81,7 +72,6 @@ class AuthControllerIT extends BaseIntegrationTest {
     void login_wrongPassword_returns401() {
         String username = uniqueUsername();
 
-        // Register first
         RegisterRequest register = new RegisterRequest();
         register.setUsername(username);
         register.setEmail(username + "@enterprise.com");
@@ -89,7 +79,6 @@ class AuthControllerIT extends BaseIntegrationTest {
         register.setFullName("Wrong Pass User");
         restTemplate.postForEntity(baseUrl() + "/api/v1/auth/register", register, Map.class);
 
-        // Login with wrong password
         LoginRequest req = new LoginRequest();
         req.setUsername(username);
         req.setPassword("wrongpassword");

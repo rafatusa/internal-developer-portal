@@ -7,8 +7,6 @@ import com.enterprise.idp.dto.project.ProjectRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -23,37 +21,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Integration tests for ProjectController.
- *
- * <p>Registers a fresh user per test-run so tests are not coupled to the seeded
- * bcrypt admin password (which could drift if the hash rounds change).
+ * TestRestTemplate and baseUrl() are inherited from BaseIntegrationTest.
  */
 @DisplayName("ProjectController Integration Tests")
 class ProjectControllerIT extends BaseIntegrationTest {
 
-    @Autowired
-    private TestRestTemplate restTemplate;
-
     private String authToken;
 
-    /**
-     * Register a fresh user and log in to get a JWT for each test run.
-     * Using a registered user avoids depending on the seeded bcrypt hash.
-     */
     @BeforeEach
     void authenticate() {
         String uniqueSuffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
         String username = "projit_" + uniqueSuffix;
         String password = "TestPass123abc";
 
-        // Register
         RegisterRequest register = new RegisterRequest();
         register.setUsername(username);
         register.setEmail(username + "@enterprise.com");
         register.setPassword(password);
         register.setFullName("Project IT User");
-        restTemplate.postForEntity(baseUrl() + "/api/v1/auth/register", register, Map.class);
+        ResponseEntity<Map> registerResponse =
+            restTemplate.postForEntity(baseUrl() + "/api/v1/auth/register", register, Map.class);
+        assertThat(registerResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
 
-        // Login
         LoginRequest login = new LoginRequest();
         login.setUsername(username);
         login.setPassword(password);
@@ -117,7 +106,7 @@ class ProjectControllerIT extends BaseIntegrationTest {
     @Test
     @DisplayName("POST /api/v1/projects — returns 409 for duplicate name")
     void createProject_duplicateName_returns409() {
-        String projectName = "Duplicate-Project-" + UUID.randomUUID().toString().substring(0, 8);
+        String projectName = "Dup-" + UUID.randomUUID().toString().substring(0, 8);
 
         ProjectRequest req1 = new ProjectRequest();
         req1.setName(projectName);
@@ -126,14 +115,13 @@ class ProjectControllerIT extends BaseIntegrationTest {
         req1.setRepoUrl("https://github.com/enterprise/dup1");
 
         HttpEntity<ProjectRequest> firstReq = new HttpEntity<>(req1, authHeaders());
-        ResponseEntity<Map> firstResponse = restTemplate.exchange(
-            baseUrl() + "/api/v1/projects", HttpMethod.POST, firstReq, Map.class);
+        ResponseEntity<Map> firstResponse =
+            restTemplate.exchange(baseUrl() + "/api/v1/projects", HttpMethod.POST, firstReq, Map.class);
         assertThat(firstResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
 
         HttpEntity<ProjectRequest> secondReq = new HttpEntity<>(req1, authHeaders());
         ResponseEntity<Map> response =
-            restTemplate.exchange(
-                baseUrl() + "/api/v1/projects", HttpMethod.POST, secondReq, Map.class);
+            restTemplate.exchange(baseUrl() + "/api/v1/projects", HttpMethod.POST, secondReq, Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
     }

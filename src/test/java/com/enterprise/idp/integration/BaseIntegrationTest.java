@@ -1,64 +1,81 @@
 package com.enterprise.idp.integration;
 
+import jakarta.annotation.PostConstruct;
+import org.junit.jupiter.api.BeforeAll;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 
 /**
- * Base class for all integration tests.
+ * Base class for integration tests.
  *
- * <p>Uses a manually-started static {@link PostgreSQLContainer} shared across all
- * subclasses, with {@code @DynamicPropertySource} to wire datasource coordinates into
- * Spring Boot's auto-configuration (DataSource AND Flyway) before the context starts.
+ * <p>Static {@link PostgreSQLContainer} is started in a static initialiser so it is
+ * running before {@code @DynamicPropertySource} fires to wire its JDBC URL into Spring
+ * Boot's DataSource AND Flyway auto-configuration — no localhost:5432 race condition.
  *
- * <p>Why not {@code @ServiceConnection} + {@code @Testcontainers}?
- * The JUnit 5 Testcontainers extension only lifecycle-manages {@code @Container} fields
- * declared in <em>concrete</em> test classes — it does not start containers declared
- * {@code static} on an {@code abstract} base class. The container silently stays
- * un-started, {@code @ServiceConnection} wires a null URL, every DB call returns 500.
- *
- * <p>Manual {@code start()} in a static initialiser + {@code @DynamicPropertySource}
- * is the correct shared-container pattern and works in all Spring Boot 3.x versions.
+ * <p>{@link TestRestTemplate} is configured to use Apache HttpClient 5
+ * ({@code HttpComponentsClientHttpRequestFactory}) so that a 401 response to a POST
+ * with a body returns the response body normally instead of throwing
+ * {@code HttpRetryException: cannot retry due to server authentication, in streaming mode}
+ * (a defect of JDK {@code HttpURLConnection} in streaming mode).
  */
 @ActiveProfiles("integration-test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 public abstract class BaseIntegrationTest {
 
-    @LocalServerPort
-    protected int port;
-
-    // One container shared across ALL subclasses — started once, reused for every context.
-    static final PostgreSQLContainer<?> POSTGRES;
-
-    static {
-        POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine")
+    // ── Shared PostgreSQL container ───────────────────────────────────────────
+    static final PostgreSQLContainer<?> POSTGRES =
+        new PostgreSQLContainer<>("postgres:16-alpine")
             .withDatabaseName("idpdb_test")
             .withUsername("idpuser")
             .withPassword("testpassword");
+
+    static {
+        // Start before @DynamicPropertySource is evaluated by the Spring TestContext.
         POSTGRES.start();
     }
 
-    /**
-     * Wire the running container's coordinates into Spring Boot's DataSource AND Flyway
-     * auto-configuration before the ApplicationContext is created.
-     *
-     * <p>This fires before context startup and overrides every datasource property
-     * — no race condition with Flyway, no partial binding from application.yml.
-     */
+    @BeforeAll
+    static void ensurePostgresRunning() {
+        if (!POSTGRES.isRunning()) {
+            POSTGRES.start();
+        }
+    }
+
+    // ── Property wiring ───────────────────────────────────────────────────────
     @DynamicPropertySource
-    static void overrideDataSourceProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url",      POSTGRES::getJdbcUrl);
-        registry.add("spring.datasource.username", POSTGRES::getUsername);
-        registry.add("spring.datasource.password", POSTGRES::getPassword);
-        registry.add("spring.datasource.driver-class-name",
-                     () -> "org.postgresql.Driver");
-        // Flyway reads its own datasource independently — override it too.
-        registry.add("spring.flyway.url",      POSTGRES::getJdbcUrl);
-        registry.add("spring.flyway.user",     POSTGRES::getUsername);
-        registry.add("spring.flyway.password", POSTGRES::getPassword);
+    static void datasourceProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url",                POSTGRES::getJdbcUrl);
+        registry.add("spring.datasource.username",           POSTGRES::getUsername);
+        registry.add("spring.datasource.password",           POSTGRES::getPassword);
+        registry.add("spring.datasource.driver-class-name",  () -> "org.postgresql.Driver");
+        registry.add("spring.flyway.url",                    POSTGRES::getJdbcUrl);
+        registry.add("spring.flyway.user",                   POSTGRES::getUsername);
+        registry.add("spring.flyway.password",               POSTGRES::getPassword);
+    }
+
+    // ── TestRestTemplate ──────────────────────────────────────────────────────
+    @LocalServerPort
+    private int port;
+
+    @Autowired
+    protected TestRestTemplate restTemplate;
+
+    /**
+     * Replace JDK {@code SimpleClientHttpRequestFactory} (default) with Apache HttpClient 5.
+     * Prevents {@code HttpRetryException} when a POST/PUT receives a 401 — Apache HttpClient
+     * always reads the response body regardless of status code.
+     */
+    @PostConstruct
+    void configureHttpClient() {
+        restTemplate.getRestTemplate()
+            .setRequestFactory(new HttpComponentsClientHttpRequestFactory());
     }
 
     protected String baseUrl() {

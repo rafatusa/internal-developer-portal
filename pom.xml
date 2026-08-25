@@ -23,13 +23,11 @@
     <maven.compiler.source>21</maven.compiler.source>
     <maven.compiler.target>21</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <!-- Dependency versions -->
     <jjwt.version>0.12.6</jjwt.version>
     <springdoc.version>2.6.0</springdoc.version>
     <mapstruct.version>1.5.5.Final</mapstruct.version>
     <lombok.version>1.18.34</lombok.version>
     <testcontainers.version>1.20.3</testcontainers.version>
-    <!-- Plugin versions -->
     <checkstyle.version>3.5.0</checkstyle.version>
     <spotbugs.version>4.8.6.4</spotbugs.version>
     <owasp.version>10.0.4</owasp.version>
@@ -60,7 +58,7 @@
       <artifactId>spring-boot-starter-actuator</artifactId>
     </dependency>
 
-    <!-- PostgreSQL Driver -->
+    <!-- PostgreSQL -->
     <dependency>
       <groupId>org.postgresql</groupId>
       <artifactId>postgresql</artifactId>
@@ -141,7 +139,14 @@
       <version>${testcontainers.version}</version>
       <scope>test</scope>
     </dependency>
-
+    <!-- Apache HttpClient 5 — required for HttpComponentsClientHttpRequestFactory in Spring 6.
+         Replaces JDK HttpURLConnection in TestRestTemplate to prevent HttpRetryException
+         on 401 responses to POST requests in streaming mode. -->
+    <dependency>
+      <groupId>org.apache.httpcomponents.client5</groupId>
+      <artifactId>httpclient5</artifactId>
+      <scope>test</scope>
+    </dependency>
     <!-- H2 for unit tests -->
     <dependency>
       <groupId>com.h2database</groupId>
@@ -152,7 +157,6 @@
 
   <build>
     <plugins>
-      <!-- Spring Boot Maven Plugin -->
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
@@ -166,7 +170,6 @@
         </configuration>
       </plugin>
 
-      <!-- Maven Compiler with Lombok + MapStruct processors -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
@@ -188,7 +191,6 @@
         </configuration>
       </plugin>
 
-      <!-- Checkstyle Plugin -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-checkstyle-plugin</artifactId>
@@ -209,7 +211,6 @@
         </dependencies>
       </plugin>
 
-      <!-- SpotBugs Plugin -->
       <plugin>
         <groupId>com.github.spotbugs</groupId>
         <artifactId>spotbugs-maven-plugin</artifactId>
@@ -222,10 +223,7 @@
         </configuration>
       </plugin>
 
-      <!-- OWASP Dependency Check
-           failBuildOnCVSS=10  — only a perfect-score CVE blocks the build (report-only posture).
-           autoUpdate is NOT set here — controlled entirely by the -DautoUpdate CLI flag in CI
-           so the pipeline can pass false (no NVD DB required) without pom.xml overriding it. -->
+      <!-- OWASP: failBuildOnCVSS=10 (report-only); autoUpdate controlled by CI -D flag -->
       <plugin>
         <groupId>org.owasp</groupId>
         <artifactId>dependency-check-maven</artifactId>
@@ -238,28 +236,23 @@
         </configuration>
       </plugin>
 
-      <!-- JaCoCo for code coverage -->
       <plugin>
         <groupId>org.jacoco</groupId>
         <artifactId>jacoco-maven-plugin</artifactId>
         <version>${jacoco.version}</version>
         <executions>
           <execution>
-            <goals>
-              <goal>prepare-agent</goal>
-            </goals>
+            <goals><goal>prepare-agent</goal></goals>
           </execution>
           <execution>
             <id>report</id>
             <phase>test</phase>
-            <goals>
-              <goal>report</goal>
-            </goals>
+            <goals><goal>report</goal></goals>
           </execution>
         </executions>
       </plugin>
 
-      <!-- Maven Surefire for unit tests — excludes *IT.java -->
+      <!-- Surefire: unit tests only, excludes *IT.java -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
@@ -271,7 +264,7 @@
         </configuration>
       </plugin>
 
-      <!-- Maven Failsafe for integration tests — v3.5.2 (3.3.2 does not exist in Central) -->
+      <!-- Failsafe v3.5.2: integration tests only -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-failsafe-plugin</artifactId>
