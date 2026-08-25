@@ -36,6 +36,8 @@ stages:
           cache: maven
       - name: Run unit tests
         run: mvn -B test -Dspring.profiles.active=test --no-transfer-progress
+        env:
+          SPRING_PROFILES_ACTIVE: test
       - name: Upload unit test report
         uses: actions/upload-artifact@v4
         with:
@@ -55,7 +57,9 @@ stages:
           distribution: temurin
           cache: maven
       - name: Run integration tests
-        run: mvn -B verify -Dspring.profiles.active=integration-test -DskipUnitTests=true --no-transfer-progress
+        run: mvn -B verify -DskipTests=true --no-transfer-progress
+        env:
+          SPRING_PROFILES_ACTIVE: integration-test
       - name: Upload integration test report
         uses: actions/upload-artifact@v4
         with:
@@ -63,10 +67,6 @@ stages:
           path: target/failsafe-reports/
 
   # ── Stage 4: Security Scan ───────────────────────────────────────────────
-  # OWASP scan behaviour:
-  #   - NVD_API_KEY present  → autoUpdate=true  downloads fresh NVD data via API key
-  #   - NVD_API_KEY absent   → autoUpdate=false skips download; || true prevents blocking
-  # failBuildOnCVSS=10: only a CVSS 10.0 perfect-score blocks the build.
   - id: security
     kind: security
     needs: [lint]
