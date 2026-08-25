@@ -1,6 +1,7 @@
 package com.enterprise.idp.integration;
 
 import com.enterprise.idp.dto.auth.LoginRequest;
+import com.enterprise.idp.dto.auth.RegisterRequest;
 import com.enterprise.idp.dto.team.TeamRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -15,9 +16,16 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 
 import java.util.Map;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+/**
+ * Integration tests for TeamController.
+ *
+ * <p>Registers a fresh user per test-run so tests are not coupled to the seeded
+ * bcrypt admin password (which could drift if the hash rounds change).
+ */
 @DisplayName("TeamController Integration Tests")
 class TeamControllerIT extends BaseIntegrationTest {
 
@@ -28,14 +36,29 @@ class TeamControllerIT extends BaseIntegrationTest {
 
     @BeforeEach
     void authenticate() {
-        LoginRequest req = new LoginRequest();
-        req.setUsername("admin");
-        req.setPassword("Admin1234!");
-        ResponseEntity<Map> resp =
-            restTemplate.postForEntity(baseUrl() + "/api/v1/auth/login", req, Map.class);
-        if (resp.getBody() != null && resp.getBody().containsKey("accessToken")) {
-            authToken = (String) resp.getBody().get("accessToken");
-        }
+        String uniqueSuffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        String username = "teamit_" + uniqueSuffix;
+        String password = "TestPass123abc";
+
+        // Register a fresh user
+        RegisterRequest register = new RegisterRequest();
+        register.setUsername(username);
+        register.setEmail(username + "@enterprise.com");
+        register.setPassword(password);
+        register.setFullName("Team IT User");
+        restTemplate.postForEntity(baseUrl() + "/api/v1/auth/register", register, Map.class);
+
+        // Login to get JWT
+        LoginRequest login = new LoginRequest();
+        login.setUsername(username);
+        login.setPassword(password);
+        ResponseEntity<Map> loginResponse =
+            restTemplate.postForEntity(baseUrl() + "/api/v1/auth/login", login, Map.class);
+
+        assertThat(loginResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(loginResponse.getBody()).isNotNull();
+        authToken = (String) loginResponse.getBody().get("accessToken");
+        assertThat(authToken).isNotBlank();
     }
 
     private HttpHeaders authHeaders() {
@@ -60,7 +83,7 @@ class TeamControllerIT extends BaseIntegrationTest {
     @DisplayName("POST /api/v1/teams — creates team and returns 201")
     void createTeam_returns201() {
         TeamRequest teamRequest = new TeamRequest();
-        teamRequest.setName("IT-Team-" + System.currentTimeMillis());
+        teamRequest.setName("IT-Team-" + UUID.randomUUID().toString().substring(0, 8));
         teamRequest.setDescription("Integration test team");
         teamRequest.setEmailDistribution("it-team@enterprise.com");
         teamRequest.setSlackChannel("#it-team");
