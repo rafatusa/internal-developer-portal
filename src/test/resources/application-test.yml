@@ -1,40 +1,28 @@
-# Unit-test profile — loaded by -Dspring.profiles.active=test in the test_unit CI stage.
-# Uses H2 in-memory database so no external PostgreSQL is needed for unit tests.
-
 spring:
   datasource:
-    url: jdbc:h2:mem:idpdb_test;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DATABASE_TO_UPPER=FALSE
+    driver-class-name: org.h2.Driver
     username: sa
     password: ""
-    driver-class-name: org.h2.Driver
-
   jpa:
     hibernate:
       ddl-auto: create-drop
-    show-sql: false
+    database-platform: org.hibernate.dialect.H2Dialect
     properties:
       hibernate:
+        # Override base application.yml PostgreSQLDialect for H2 unit tests
         dialect: org.hibernate.dialect.H2Dialect
-
   flyway:
     enabled: false
 
-server:
-  port: 0
-
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health
-
-# JWT — HS512 requires exactly 64+ bytes.
-# Secret below is 80 alphanumeric chars = 80 bytes — no special chars.
 app:
   jwt:
-    secret: "unittestjwtsigningsecretkeyforhs512algorithmwhichneeds64bytesminimumrightnow123456"
-    expiration-ms: 3600000
-    refresh-expiration-ms: 7200000
+    # HS512 requires >= 64 bytes — this secret is exactly 64 alphanumeric chars
+    secret: unittestjwtsigningsecretforhs512algorithmmustbeatleast64byteslong12
+    expiration-ms: 86400000
+    refresh-expiration-ms: 604800000
+  security:
+    bcrypt-strength: 4
 
 logging:
   level:

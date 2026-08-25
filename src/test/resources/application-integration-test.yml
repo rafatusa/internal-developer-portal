@@ -11,6 +11,12 @@ spring:
     database-platform: org.hibernate.dialect.H2Dialect
     show-sql: false
     open-in-view: false
+    properties:
+      hibernate:
+        # MUST override base application.yml which sets PostgreSQLDialect.
+        # spring.jpa.properties.hibernate.dialect takes precedence over
+        # spring.jpa.database-platform in Hibernate's resolution order.
+        dialect: org.hibernate.dialect.H2Dialect
 
   flyway:
     enabled: true
@@ -27,8 +33,6 @@ spring:
 
 server:
   port: 0
-
-spring.main.banner-mode: "off"
 
 management:
   endpoints:
