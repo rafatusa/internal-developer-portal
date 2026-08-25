@@ -125,11 +125,6 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-testcontainers</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
       <groupId>org.springframework.security</groupId>
       <artifactId>spring-security-test</artifactId>
       <scope>test</scope>
@@ -228,19 +223,15 @@
       </plugin>
 
       <!-- OWASP Dependency Check
-           failBuildOnCVSS=10  — only a perfect-score (10.0) CVE blocks the build.
-           autoUpdate=false    — skip NVD API download; use the bundled/cached DB.
-                                 Prevents NullPointerException when NVD_API_KEY is
-                                 absent or the NIST endpoint is unreachable.
-           Day-2: set autoUpdate=true and tighten failBuildOnCVSS=9 once a valid
-                  NVD_API_KEY is confirmed and the suppression baseline is established. -->
+           failBuildOnCVSS=10  — only a perfect-score CVE blocks the build (report-only posture).
+           autoUpdate is NOT set here — controlled entirely by the -DautoUpdate CLI flag in CI
+           so the pipeline can pass false (no NVD DB required) without pom.xml overriding it. -->
       <plugin>
         <groupId>org.owasp</groupId>
         <artifactId>dependency-check-maven</artifactId>
         <version>${owasp.version}</version>
         <configuration>
           <failBuildOnCVSS>10</failBuildOnCVSS>
-          <autoUpdate>false</autoUpdate>
           <format>HTML</format>
           <suppressionFile>owasp-suppressions.xml</suppressionFile>
           <nvdApiKey>${env.NVD_API_KEY}</nvdApiKey>
@@ -268,7 +259,7 @@
         </executions>
       </plugin>
 
-      <!-- Maven Surefire for unit tests -->
+      <!-- Maven Surefire for unit tests — excludes *IT.java -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>

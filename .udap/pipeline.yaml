@@ -35,7 +35,7 @@ stages:
           distribution: temurin
           cache: maven
       - name: Run unit tests
-        run: mvn -B test -Dspring.profiles.active=test --no-transfer-progress
+        run: mvn -B test --no-transfer-progress
         env:
           SPRING_PROFILES_ACTIVE: test
       - name: Upload unit test report
@@ -57,7 +57,9 @@ stages:
           distribution: temurin
           cache: maven
       - name: Run integration tests
-        run: mvn -B verify -DskipTests=true --no-transfer-progress
+        run: |
+          mvn -B package -DskipTests --no-transfer-progress
+          mvn -B failsafe:integration-test failsafe:verify --no-transfer-progress
         env:
           SPRING_PROFILES_ACTIVE: integration-test
       - name: Upload integration test report
@@ -80,22 +82,11 @@ stages:
           cache: maven
       - name: OWASP Dependency Check
         run: |
-          if [ -z "${NVD_API_KEY}" ]; then
-            echo "NVD_API_KEY not set — running OWASP with autoUpdate=false (report only, no block)"
-            mvn -B org.owasp:dependency-check-maven:check \
-              -DfailBuildOnCVSS=10 \
-              -DautoUpdate=false \
-              -DsuppressionFile=owasp-suppressions.xml \
-              --no-transfer-progress || true
-          else
-            echo "NVD_API_KEY present — running full OWASP scan with live NVD data"
-            mvn -B org.owasp:dependency-check-maven:check \
-              -DfailBuildOnCVSS=10 \
-              -DautoUpdate=true \
-              -DnvdApiKey="${NVD_API_KEY}" \
-              -DsuppressionFile=owasp-suppressions.xml \
-              --no-transfer-progress || true
-          fi
+          mvn -B org.owasp:dependency-check-maven:check \
+            -DfailBuildOnCVSS=10 \
+            -DautoUpdate=false \
+            -DsuppressionFile=owasp-suppressions.xml \
+            --no-transfer-progress || true
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
       - name: Upload OWASP report
