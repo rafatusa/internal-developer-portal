@@ -6,13 +6,13 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ─── Teams ────────────────────────────────────────────────────────────────────
 CREATE TABLE teams (
-    id          BIGSERIAL PRIMARY KEY,
-    name        VARCHAR(100) NOT NULL UNIQUE,
-    description TEXT,
-    email       VARCHAR(255),
-    slack_channel VARCHAR(100),
-    created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
+    id                 BIGSERIAL PRIMARY KEY,
+    name               VARCHAR(100) NOT NULL UNIQUE,
+    description        TEXT,
+    email_distribution VARCHAR(255),
+    slack_channel      VARCHAR(100),
+    created_at         TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
 -- ─── Users ────────────────────────────────────────────────────────────────────

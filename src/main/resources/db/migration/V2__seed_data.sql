@@ -1,8 +1,7 @@
 -- V2: Seed Data for Internal Developer Portal
 -- Description: Inserts default admin user and sample data
 
--- Default admin user (password: Admin1234!  →  bcrypt hash)
-INSERT INTO teams (name, description, email, slack_channel) VALUES
+INSERT INTO teams (name, description, email_distribution, slack_channel) VALUES
     ('Platform Engineering', 'Core platform infrastructure team', 'platform@enterprise.com', '#platform-eng'),
     ('Application Team',    'Business application developers',   'appteam@enterprise.com',  '#app-team'),
     ('Security Team',       'Security and compliance',           'security@enterprise.com',  '#security');
@@ -22,6 +21,6 @@ INSERT INTO projects (name, description, status, repo_url, tech_stack, team_id) 
 
 -- Sample environments
 INSERT INTO environments (name, type, base_url, description, project_id) VALUES
-    ('Development', 'DEVELOPMENT', 'http://dev.idp.internal:8080',     'Dev environment',        1),
-    ('Staging',     'STAGING',     'https://staging.idp.enterprise.com', 'Pre-prod environment', 1),
-    ('Production',  'PRODUCTION',  'https://idp.enterprise.com',        'Production environment', 1);
+    ('Development', 'DEVELOPMENT', 'http://dev.idp.internal:8080',       'Dev environment',        1),
+    ('Staging',     'STAGING',     'https://staging.idp.enterprise.com', 'Pre-prod environment',   1),
+    ('Production',  'PRODUCTION',  'https://idp.enterprise.com',         'Production environment', 1);
