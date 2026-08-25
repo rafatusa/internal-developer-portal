@@ -10,8 +10,10 @@ spring:
 
 app:
   jwt:
-    secret: integration-test-jwt-secret-key-must-be-at-least-32-chars-for-hs256
+    # HS512 requires ≥ 64 bytes — this secret is exactly 64 chars
+    secret: integration-test-jwt-secret-key-exactly-64-chars-long-for-hs512x
     expiration-ms: 86400000
+    refresh-expiration-ms: 604800000
 
 logging:
   level:

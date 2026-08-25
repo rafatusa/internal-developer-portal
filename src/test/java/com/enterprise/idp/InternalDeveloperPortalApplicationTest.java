@@ -13,7 +13,10 @@ import org.springframework.test.context.TestPropertySource;
     "spring.datasource.password=",
     "spring.jpa.hibernate.ddl-auto=create-drop",
     "spring.flyway.enabled=false",
-    "app.jwt.secret=unit-test-jwt-secret-key-must-be-at-least-32-chars"
+    // HS512 requires ≥ 64 bytes — WeakKeyException crashes the context if shorter
+    "app.jwt.secret=unit-test-jwt-secret-key-exactly-64-characters-long-for-hs512-ok!",
+    "app.jwt.expiration-ms=86400000",
+    "app.jwt.refresh-expiration-ms=604800000"
 })
 @DisplayName("Application Context Loads")
 class InternalDeveloperPortalApplicationTest {
