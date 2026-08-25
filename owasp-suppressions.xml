@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+
+  <!--
+    Internal Developer Portal — OWASP Dependency Check Suppressions
+    Review these suppressions at each dependency upgrade cycle.
+  -->
+
+  <!-- Spring Boot embedded Tomcat — patched by Spring Boot BOM; version in reports lags -->
+  <suppress>
+    <notes>Tomcat version reported by dependency-check may lag the actual embedded version managed by Spring Boot BOM</notes>
+    <packageUrl regex="true">^pkg:maven/org\.apache\.tomcat\.embed/tomcat\-embed\-.*$</packageUrl>
+    <cve>CVE-2023-28708</cve>
+  </suppress>
+
+  <!-- Snakeyaml — Spring Boot 3.x ships a patched version; CPE mismatch on older entries -->
+  <suppress>
+    <notes>Spring Boot 3.x pins a patched snakeyaml version; false positive on old CVE</notes>
+    <packageUrl regex="true">^pkg:maven/org\.yaml/snakeyaml.*$</packageUrl>
+    <cvssBelow>7</cvssBelow>
+  </suppress>
+
+  <!-- H2 test-scope only — not on production classpath -->
+  <suppress>
+    <notes>H2 is test-scope only and never on the production classpath</notes>
+    <packageUrl regex="true">^pkg:maven/com\.h2database/h2.*$</packageUrl>
+    <vulnerabilityName regex="true">.*</vulnerabilityName>
+  </suppress>
+
+</suppressions>

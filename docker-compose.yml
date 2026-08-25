@@ -1,0 +1,73 @@
+version: "3.9"
+
+# ─── Internal Developer Portal — Local Development Stack ──────────────────────
+# Usage: docker compose up -d
+# Access: http://localhost:80  (Nginx proxy)
+#         http://localhost:8080 (App direct)
+#         http://localhost:5432 (PostgreSQL)
+
+services:
+  # ─── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: idp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: idpdb
+      POSTGRES_USER: idpuser
+      POSTGRES_PASSWORD: localdevpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U idpuser -d idpdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Spring Boot Application ─────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: idp-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: idpdb
+      DB_USERNAME: idpuser
+      DB_PASSWORD: localdevpassword
+      JWT_SECRET: local-development-jwt-secret-key-32-chars-minimum
+      SPRING_PROFILES_ACTIVE: development
+      PORT: 8080
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+  # ─── Nginx Reverse Proxy ────────────────────────────────────────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: idp-nginx
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  postgres_data:
+    driver: local

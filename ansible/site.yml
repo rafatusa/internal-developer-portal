@@ -1,0 +1,5 @@
+---
+# ansible/site.yml — entry point for CI pipeline
+# Wraps playbook.yml with CI-injected extra-vars
+- name: Internal Developer Portal — full configure and deploy
+  import_playbook: playbook.yml

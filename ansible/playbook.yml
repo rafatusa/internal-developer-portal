@@ -1,0 +1,215 @@
+---
+# Ansible Playbook — Internal Developer Portal
+# Purpose : Configure Nginx, deploy the application container,
+#           write environment variables, start the app, verify health.
+# Runs    : AFTER Puppet bootstrap has completed.
+- name: Configure and deploy Internal Developer Portal
+  hosts: idp_servers
+  become: true
+  gather_facts: true
+
+  vars:
+    app_name: "internal-developer-portal"
+    app_port: 8080
+    nginx_port: 80
+    app_user: "idpapp"
+    app_dir: "/opt/idpapp"
+    env_file: "/opt/idpapp/.env"
+    container_name: "idp-app"
+    health_check_retries: 20
+    health_check_delay: 15
+    # Passed as --extra-vars from CI:
+    # docker_image, db_password, jwt_secret, github_token
+    db_host: "localhost"
+    db_port: "5432"
+    db_name: "idpdb"
+    db_username: "idpuser"
+    spring_profile: "production"
+
+  pre_tasks:
+    - name: Wait for system to be ready
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 120
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
+  tasks:
+    # ─── Nginx ──────────────────────────────────────────────────────────────
+    - name: Install Nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: true
+
+    - name: Write Nginx site config
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-available/idp
+        mode: "0644"
+        content: |
+          upstream idp_app {
+              server 127.0.0.1:{{ app_port }};
+              keepalive 32;
+          }
+
+          server {
+              listen 80;
+              server_name _;
+
+              client_max_body_size 10M;
+
+              add_header X-Frame-Options          "SAMEORIGIN"  always;
+              add_header X-Content-Type-Options   "nosniff"     always;
+              add_header X-XSS-Protection         "1; mode=block" always;
+              add_header Referrer-Policy          "strict-origin" always;
+
+              location / {
+                  proxy_pass         http://idp_app;
+                  proxy_http_version 1.1;
+                  proxy_set_header   Host              $host;
+                  proxy_set_header   X-Real-IP         $remote_addr;
+                  proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+                  proxy_set_header   X-Forwarded-Proto $scheme;
+                  proxy_set_header   Connection        "";
+                  proxy_read_timeout 60s;
+                  proxy_connect_timeout 10s;
+              }
+
+              location /actuator/health {
+                  proxy_pass         http://idp_app;
+                  proxy_http_version 1.1;
+                  proxy_set_header   Host $host;
+                  access_log         off;
+              }
+
+              location /nginx-status {
+                  stub_status;
+                  allow 127.0.0.1;
+                  deny  all;
+              }
+          }
+      notify: Reload Nginx
+
+    - name: Enable IDP site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/idp
+        dest: /etc/nginx/sites-enabled/idp
+        state: link
+      notify: Reload Nginx
+
+    - name: Remove default Nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload Nginx
+
+    - name: Start and enable Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+
+    # ─── Docker login to GHCR ───────────────────────────────────────────────
+    - name: Log in to GHCR
+      ansible.builtin.shell:
+        cmd: "echo '{{ github_token }}' | docker login ghcr.io -u github-actions --password-stdin"
+      no_log: true
+      changed_when: true
+
+    # ─── Ensure app directory exists ────────────────────────────────────────
+    - name: Ensure app directory exists
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0750"
+
+    # ─── Environment file ───────────────────────────────────────────────────
+    - name: Write application .env file
+      ansible.builtin.copy:
+        dest: "{{ env_file }}"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0600"
+        content: |
+          DB_HOST={{ db_host }}
+          DB_PORT={{ db_port }}
+          DB_NAME={{ db_name }}
+          DB_USERNAME={{ db_username }}
+          DB_PASSWORD={{ db_password }}
+          JWT_SECRET={{ jwt_secret }}
+          SPRING_PROFILES_ACTIVE={{ spring_profile }}
+          PORT={{ app_port }}
+      no_log: true
+
+    # ─── Pull latest image ───────────────────────────────────────────────────
+    - name: Pull Docker image
+      ansible.builtin.shell:
+        cmd: "docker pull {{ docker_image }}"
+      register: docker_pull_result
+      changed_when: "'Status: Downloaded newer image' in docker_pull_result.stdout or 'Pulled' in docker_pull_result.stdout"
+
+    # ─── Stop existing container if running ─────────────────────────────────
+    - name: Stop and remove existing container
+      ansible.builtin.shell:
+        cmd: "docker rm -f {{ container_name }}"
+      register: docker_rm_result
+      changed_when: docker_rm_result.rc == 0
+      failed_when: docker_rm_result.rc != 0 and 'No such container' not in docker_rm_result.stderr
+
+    # ─── Start application container ─────────────────────────────────────────
+    - name: Start application container
+      ansible.builtin.shell:
+        cmd: >
+          docker run -d
+          --name {{ container_name }}
+          --restart unless-stopped
+          --env-file {{ env_file }}
+          --network host
+          --log-driver json-file
+          --log-opt max-size=100m
+          --log-opt max-file=3
+          --health-cmd "curl -sf http://localhost:{{ app_port }}/actuator/health || exit 1"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 3
+          {{ docker_image }}
+      register: docker_run_result
+      changed_when: docker_run_result.rc == 0
+
+    # ─── Wait for health check ──────────────────────────────────────────────
+    - name: Wait for application to become healthy
+      ansible.builtin.uri:
+        url: "http://localhost:{{ app_port }}/actuator/health"
+        method: GET
+        status_code: 200
+        timeout: 10
+      register: health_result
+      retries: "{{ health_check_retries }}"
+      delay: "{{ health_check_delay }}"
+      until: health_result.status == 200
+
+    # ─── Final verification ─────────────────────────────────────────────────
+    - name: Verify Nginx proxy health
+      ansible.builtin.uri:
+        url: "http://localhost:{{ nginx_port }}/actuator/health"
+        method: GET
+        status_code: 200
+      register: nginx_health
+
+    - name: Print deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "✅ Application deployed successfully"
+          - "   Image    : {{ docker_image }}"
+          - "   Container: {{ container_name }}"
+          - "   App health: {{ health_result.json.status }}"
+          - "   Nginx HTTP: {{ nginx_health.status }}"
+
+  handlers:
+    - name: Reload Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded

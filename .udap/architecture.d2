@@ -1,0 +1,28 @@
+# udap:meta cloud=aws region=us-east-1 target=ec2
+
+internet: Internet { shape: rectangle; udap-type: generic.user }
+vpc: AWS VPC us-east-1 {
+  nginx: Nginx Reverse Proxy { shape: rectangle; udap-type: aws.ec2 }
+  ec2: EC2 Instance t3.medium { shape: rectangle; udap-type: aws.ec2 }
+  pg: PostgreSQL 17 { shape: rectangle; udap-type: generic.db }
+  sg_web: Security Group Web { shape: rectangle; udap-type: aws.ec2 }
+  eip: Elastic IP { shape: rectangle; udap-type: aws.ec2 }
+}
+ghcr: GHCR Container Registry { shape: rectangle; udap-type: generic.cdn }
+github_ci: GitHub Actions CICD { shape: rectangle; udap-type: generic.app }
+puppet: Puppet Bootstrap { shape: rectangle; udap-type: generic.app }
+iam: AWS IAM Role { shape: rectangle; udap-type: aws.ec2 }
+s3_state: S3 Terraform State { shape: rectangle; udap-type: aws.s3 }
+spring_app: Spring Boot IDP API { shape: rectangle; udap-type: generic.app }
+
+internet -> vpc.nginx: HTTPS 443 and HTTP 80
+vpc.nginx -> spring_app: proxy pass 8080
+spring_app -> vpc.pg: JDBC 5432
+vpc.ec2 -> spring_app: Docker container
+ghcr -> vpc.ec2: docker pull image
+github_ci -> ghcr: docker push image
+github_ci -> vpc.ec2: Ansible deploy
+puppet -> vpc.ec2: bootstrap Java Docker users hardening
+github_ci -> s3_state: Terraform state backend
+iam -> vpc.ec2: instance profile attached
+vpc.eip -> vpc.ec2: static public IP
