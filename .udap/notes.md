@@ -1,56 +1,76 @@
-# Internal Developer Portal — Build Notes
+# internal-developer-portal — working notes
 
-## Status
-**READY TO SHIP** — validate PASS, test rehearsal: unit 27/27 PASS, integration tests SKIPPED (Docker sandbox gap — Testcontainers requires Docker; CI runners have it, sandbox does not).
+## State
+- Meta approved: aws / us-east-1 / ec2 / github / spring-boot / nginx LB
+- Architecture + pipeline written (rev 2), design approved, **plan approved**
+- Phase: GENERATION COMPLETE — validate PASS, rehearsal partial (see below)
+- NEXT: create_repo_and_push → set secrets → deploy → wait_for_run
 
-## Architecture
-- Spring Boot 3.3.5 / Java 21 REST API on AWS EC2
-- PostgreSQL containerized in Docker on the same EC2 instance (docker-compose)
-- Nginx reverse proxy (port 80/443 → app:8080)
-- JWT authentication (jjwt 0.12.6) with access + refresh tokens
-- CRUD APIs: Projects, Teams, Environments, Deployments
-- Flyway migrations: V1 schema + V2 seed data (admin user, sample data)
-- OpenAPI/Swagger at /swagger-ui.html
-- Spring Boot Actuator at /actuator/health (public)
+## Decisions
+- Spring Boot 3.4.5, Java 21, Maven (scaffold via Spring Initializr).
+- PostgreSQL runs as a Docker container on the same EC2 host (Tier 1, no RDS)
+  — RDS is the #1 recommended Tier-2 upgrade (documented in deployment-summary).
+- JWT via JJWT 0.12.x, HS256, secret from JWT_SECRET. JwtService REFUSES to
+  construct if the secret is < 32 bytes (fail fast, not silent weakness).
+- OpenAPI via springdoc 2.8.8 → /swagger-ui.html, /v3/api-docs.
+- Bootstrap split: Puppet (java, docker, users, OS hardening) → Ansible
+  (nginx, container deploy, env vars, start).
+- Image published to GHCR tagged with commit SHA; Ansible pulls that exact tag.
+- Nginx :80 → app 127.0.0.1:8080. App/DB publish NO public port.
+- Instance: t3.medium, Ubuntu 22.04, dedicated VPC 10.42.0.0/16 (user asked
+  for VPC explicitly, so not reusing the default one).
 
-## CI/CD Pipeline
-- Stages: lint (checkstyle, spotbugs) → test_unit → test_integration → security → build → provision → configure → verify
-- Maven Failsafe 3.5.2 (NOT 3.3.2 — does not exist in Maven Central)
-- Integration tests use Testcontainers + PostgreSQL container
-- OWASP Dependency Check with NVD_API_KEY secret
-- Docker image pushed to GHCR
-- Terraform provisions: VPC, EC2 t3.medium, Security Group (80/443/22/8080), Elastic IP, IAM role/profile
-- Puppet bootstrap: Java 21, Docker, system hardening, users
-- Ansible configure: Nginx, docker-compose up, env vars
+## Contracts that MUST hold
+### Pom requires these files to exist
+checkstyle.xml, checkstyle-suppressions.xml, spotbugs-exclude.xml,
+owasp-suppressions.xml
+### Test naming (load-bearing)
+- `*Test.java` → surefire (unit). `*IT.java` → failsafe (`-Pfailsafe`).
+- Tests use H2 in-memory under the `test` profile — no Postgres in CI.
+### Pipeline → Puppet/Ansible variable wiring
+- puppet-bootstrap passes `sudo DEPLOY_USER=$DEPLOY_USER bash bootstrap.sh`;
+  bootstrap.sh exports FACTER_deploy_user → site.pp reads $facts['deploy_user'].
+  If this breaks, the docker group is added to the WRONG user.
+- configure passes -e db_password/jwt_secret/admin_username/admin_password/
+  image_tag/ghcr_user/ghcr_token/repo. app.env.j2 requires ALL of them
+  (no defaults — a missing one is an undefined-variable error, by design).
+- ADMIN_PASSWORD secret is used by BOTH the configure stage and the perf stage
+  (k6 logs in as admin). Must be set before deploy.
 
-## Key Decisions
-- DB is containerized (NOT RDS) — single-host docker-compose with postgres:16-alpine
-- Ansible playbook is ansible/playbook.yml; pipeline runs ansible/site.yml (symlink-style include)
-- SSH_USER = ubuntu (ubuntu 22.04 AMI)
-- App listens on 8080; Nginx proxies port 80 → 8080
-- JWT: generateAccessToken(Authentication) / generateRefreshToken(String) — NOT generateToken(String)
-- AuthResponse fields: accessToken, refreshToken (NOT token)
-- Team entity has emailDistribution field (NOT email)
-- API base path: /api/v1/** (NOT /api/**)
+## Verification status
+- validate_project: **PASS** (90 files).
+- test_project: lint OK, SpotBugs OK, unit tests OK, integration tests OK.
+  OWASP stage FAILED IN SANDBOX ONLY — `java.io.IOException: File too large`
+  at ~267MB while writing the NVD H2 store, then timed out at 540s.
+  This is a sandbox disk limit, NOT a project defect. Did NOT weaken the gate.
+  Expect it to pass on a GitHub runner (14GB disk). Added NVD caching to the
+  security stage so repeat CI runs don't re-download the DB.
 
-## Fixes Applied
-1. maven-failsafe-plugin: 3.3.2 → 3.5.2 (3.3.2 not in Maven Central)
-2. All star imports in domain entities → explicit imports (Checkstyle AvoidStarImport)
-3. All star imports in controllers → explicit imports
-4. Removed MissingJavadocMethod (redundant with @Operation annotations)
-5. JwtTokenProviderTest: rewritten to use real 3-arg constructor and generateAccessToken(Authentication)
-6. AuthServiceTest: fixed to use accessToken/refreshToken fields and correct mock setup
-7. TeamServiceTest + TeamControllerIT: removed setEmail() calls → setEmailDistribution()
-8. AuthControllerIT + ProjectControllerIT: fixed API paths to /api/v1/... and accessToken field
-9. ProjectServiceTest.update_success: removed unnecessary existsByName stubbing (name unchanged → not called)
-10. AuthServiceTest.register_success: asserts "newuser" (from request) not "testuser" (from save mock)
+## Gotchas / things already fixed
+- Spring Initializr scaffold main class used TABS → Checkstyle FileTabCharacter
+  failed. Reindented with spaces. Any future scaffold file needs the same.
+- Added @ConfigurationPropertiesScan to the main class — JwtProperties /
+  BootstrapProperties would otherwise only bind via @EnableConfigurationProperties.
+- Scaffold Dockerfile was root + no HEALTHCHECK + `CMD [... "--server.port=${PORT:-8080}"]`
+  (exec form does NOT expand ${PORT} — it was passed literally to Java). Rewrote:
+  multi-stage, non-root uid 1500, HEALTHCHECK, exec-form ENTRYPOINT.
+- nginx `validate:` on the template is useless before the symlink exists —
+  replaced with an explicit `nginx -t` task AFTER enabling the vhost.
+- Ansible idempotency: container tasks use docker inspect to compare the
+  running container's image id vs the desired one; only replace on mismatch.
+- `mvn verify -Pfailsafe` runs surefire too — keep unit tests green.
+- Checkstyle runs on main sources only (includeTestSourceDirectory=false).
+- Known-issue warnings about ansible synchronize / copy-with-exclude /
+  rds_endpoint job outputs were reviewed and do NOT apply here (builtin
+  modules only; every stage reads terraform output itself).
 
-## Secrets Required (set via set_pipeline_secret after push)
-- DB_PASSWORD — alphanumeric, ≥20 chars
-- JWT_SECRET — alphanumeric, ≥64 chars
-- NVD_API_KEY — OWASP NVD API key
-
-## Post-Deploy Verification
-- GET /actuator/health → HTTP 200 {"status":"UP"}
-- GET /swagger-ui.html → Swagger UI
-- GET / → Landing page
+## Remaining work
+- [x] app code, config, security, tests, k6
+- [x] infra/ terraform (VPC, EC2, SG, EIP, IAM)
+- [x] puppet/ + ansible/
+- [x] docs (README, architecture, deployment, api, test-report, summary)
+- [x] validate_project PASS
+- [ ] create_repo_and_push
+- [ ] set_pipeline_secret: DB_PASSWORD, JWT_SECRET, ADMIN_PASSWORD (repo must
+      exist first — secrets live ON the repo)
+- [ ] deploy + wait_for_run + verify /actuator/health returns 200

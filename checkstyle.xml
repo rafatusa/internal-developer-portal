@@ -4,82 +4,72 @@
     "https://checkstyle.org/dtds/configuration_1_3.dtd">
 
 <!--
-  Checkstyle configuration for Internal Developer Portal
-  Enterprise rules — enforces code quality without boilerplate overhead.
-  API documentation is handled by @Operation annotations (SpringDoc/OpenAPI),
-  so Javadoc requirements are intentionally omitted.
+  Internal Developer Portal — Checkstyle configuration.
+  Pragmatic enterprise ruleset: catches real defects and enforces consistent
+  formatting without blocking on subjective style choices.
 -->
 <module name="Checker">
-  <property name="severity" value="error"/>
-  <property name="fileExtensions" value="java"/>
+    <property name="severity" value="error"/>
+    <property name="fileExtensions" value="java"/>
 
-  <!-- ─── File-level checks ─────────────────────────────────────────────── -->
-  <module name="FileTabCharacter">
-    <property name="eachLine" value="false"/>
-  </module>
-
-  <module name="NewlineAtEndOfFile">
-    <property name="lineSeparator" value="lf"/>
-  </module>
-
-  <module name="FileLength">
-    <property name="max" value="600"/>
-  </module>
-
-  <module name="LineLength">
-    <property name="max" value="120"/>
-    <property name="ignorePattern" value="^package.*|^import.*|a href|href|http://|https://|ftp://"/>
-  </module>
-
-  <!-- ─── Token-level checks ────────────────────────────────────────────── -->
-  <module name="TreeWalker">
-
-    <!-- Imports: star imports are forbidden; all sources use explicit imports -->
-    <module name="AvoidStarImport"/>
-    <module name="RedundantImport"/>
-    <module name="UnusedImports"/>
-    <module name="IllegalImport">
-      <property name="illegalPkgs" value="sun, com.sun"/>
+    <!-- No tabs anywhere -->
+    <module name="FileTabCharacter">
+        <property name="eachLine" value="true"/>
     </module>
 
-    <!-- Naming -->
-    <module name="TypeName"/>
-    <module name="MethodName"/>
-    <module name="ParameterName"/>
-    <module name="LocalVariableName"/>
-    <module name="MemberName"/>
-    <module name="ConstantName"/>
-    <module name="PackageName">
-      <property name="format" value="^[a-z]+(\.[a-z][a-z0-9]*)*$"/>
+    <!-- Files must end with a newline -->
+    <module name="NewlineAtEndOfFile"/>
+
+    <!-- Line length -->
+    <module name="LineLength">
+        <property name="max" value="140"/>
+        <property name="ignorePattern" value="^package.*|^import.*|a href|href|http://|https://"/>
     </module>
 
-    <!-- Coding -->
-    <module name="EqualsHashCode"/>
-    <module name="EmptyStatement"/>
-    <module name="SimplifyBooleanExpression"/>
-    <module name="SimplifyBooleanReturn"/>
-    <module name="StringLiteralEquality"/>
-    <module name="NoFinalizer"/>
-
-    <!-- Design -->
-    <module name="OneTopLevelClass"/>
-
-    <!-- Whitespace -->
-    <module name="WhitespaceAround">
-      <property name="allowEmptyConstructors" value="true"/>
-      <property name="allowEmptyMethods" value="true"/>
-      <property name="allowEmptyLambdas" value="true"/>
+    <module name="SuppressionFilter">
+        <property name="file" value="checkstyle-suppressions.xml"/>
+        <property name="optional" value="false"/>
     </module>
 
-    <!-- Blocks -->
-    <module name="LeftCurly"/>
-    <module name="RightCurly"/>
-    <module name="NeedBraces"/>
+    <module name="TreeWalker">
+        <!-- Imports -->
+        <module name="UnusedImports">
+            <property name="processJavadoc" value="true"/>
+        </module>
+        <module name="RedundantImport"/>
+        <module name="AvoidStarImport"/>
 
-    <!-- Miscellaneous -->
-    <module name="UpperEll"/>
-    <module name="ArrayTypeStyle"/>
-    <module name="OuterTypeFilename"/>
+        <!-- Naming -->
+        <module name="PackageName"/>
+        <module name="TypeName"/>
+        <module name="MethodName"/>
+        <module name="LocalVariableName"/>
+        <module name="MemberName"/>
+        <module name="ConstantName"/>
+        <module name="ParameterName"/>
 
-  </module>
+        <!-- Braces and blocks -->
+        <module name="NeedBraces"/>
+        <module name="LeftCurly"/>
+        <module name="RightCurly"/>
+        <module name="EmptyStatement"/>
+
+        <!-- Correctness -->
+        <module name="EqualsHashCode"/>
+        <module name="SimplifyBooleanExpression"/>
+        <module name="SimplifyBooleanReturn"/>
+        <module name="StringLiteralEquality"/>
+        <module name="MissingSwitchDefault"/>
+        <module name="FallThrough"/>
+        <module name="OneStatementPerLine"/>
+        <module name="MultipleVariableDeclarations"/>
+        <module name="ModifierOrder"/>
+
+        <!-- Whitespace -->
+        <module name="WhitespaceAfter"/>
+        <module name="NoWhitespaceBefore"/>
+        <module name="GenericWhitespace"/>
+        <module name="MethodParamPad"/>
+        <module name="ParenPad"/>
+    </module>
 </module>

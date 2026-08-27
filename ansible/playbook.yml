@@ -1,215 +1,304 @@
 ---
-# Ansible Playbook — Internal Developer Portal
-# Purpose : Configure Nginx, deploy the application container,
-#           write environment variables, start the app, verify health.
-# Runs    : AFTER Puppet bootstrap has completed.
-- name: Configure and deploy Internal Developer Portal
-  hosts: idp_servers
+# Application deployment for the Internal Developer Portal.
+#
+# Runs AFTER the Puppet bootstrap has installed Docker, Java and the service
+# account, and applied OS hardening. This play owns only the application:
+# nginx configuration, environment variables, the PostgreSQL and application
+# containers, and the start/health sequence.
+#
+# Every task uses ansible.builtin modules only — ansible-core ships no
+# third-party collections, so nothing here requires a galaxy install.
+#
+# Idempotency: container state is decided by inspecting the running image
+# digest before acting, so a rerun with an unchanged image reports no change.
+
+- name: Deploy the Internal Developer Portal
+  hosts: all
   become: true
   gather_facts: true
 
   vars:
-    app_name: "internal-developer-portal"
+    app_name: internal-developer-portal
+    app_dir: /opt/portal
     app_port: 8080
-    nginx_port: 80
-    app_user: "idpapp"
-    app_dir: "/opt/idpapp"
-    env_file: "/opt/idpapp/.env"
-    container_name: "idp-app"
-    health_check_retries: 20
-    health_check_delay: 15
-    # Passed as --extra-vars from CI:
-    # docker_image, db_password, jwt_secret, github_token
-    db_host: "localhost"
-    db_port: "5432"
-    db_name: "idpdb"
-    db_username: "idpuser"
-    spring_profile: "production"
+    db_name: idp
+    db_user: idp
+    db_port: 5432
+    postgres_image: "postgres:16-alpine"
+    app_image: "ghcr.io/{{ repo }}:{{ image_tag }}"
+    docker_network: portal-net
+    db_container: "{{ app_name }}-db"
+    app_container: "{{ app_name }}-app"
+    db_volume: "{{ app_name }}-pgdata"
 
   pre_tasks:
-    - name: Wait for system to be ready
+    - name: Wait for the host to accept connections
       ansible.builtin.wait_for_connection:
-        delay: 5
         timeout: 120
 
-    - name: Gather facts
-      ansible.builtin.setup:
+    - name: Verify Docker is present (installed by the Puppet bootstrap)
+      ansible.builtin.command: docker --version
+      register: docker_version
+      changed_when: false
+
+    - name: Report the Docker version in use
+      ansible.builtin.debug:
+        msg: "{{ docker_version.stdout }}"
 
   tasks:
-    # ─── Nginx ──────────────────────────────────────────────────────────────
-    - name: Install Nginx
+    # --- Directories ------------------------------------------------------
+    - name: Ensure the application directory tree exists
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: portal
+        group: portal
+        mode: "0750"
+      loop:
+        - "{{ app_dir }}"
+        - "{{ app_dir }}/data"
+
+    # --- Environment ------------------------------------------------------
+    - name: Write the application environment file
+      ansible.builtin.template:
+        src: app.env.j2
+        dest: "{{ app_dir }}/app.env"
+        owner: portal
+        group: portal
+        mode: "0640"
+      no_log: true
+      register: app_env
+
+    # --- Container runtime ------------------------------------------------
+    - name: Check whether the docker network exists
+      ansible.builtin.command: "docker network inspect {{ docker_network }}"
+      register: network_check
+      changed_when: false
+      failed_when: false
+
+    - name: Create the private docker network
+      ansible.builtin.command: "docker network create {{ docker_network }}"
+      when: network_check.rc != 0
+      changed_when: true
+
+    - name: Log in to GHCR
+      ansible.builtin.command:
+        cmd: "docker login ghcr.io -u {{ ghcr_user }} --password-stdin"
+        stdin: "{{ ghcr_token }}"
+      register: ghcr_login
+      changed_when: false
+      no_log: true
+
+    # --- PostgreSQL -------------------------------------------------------
+    - name: Check whether the PostgreSQL data volume exists
+      ansible.builtin.command: "docker volume inspect {{ db_volume }}"
+      register: pgvolume_check
+      changed_when: false
+      failed_when: false
+
+    - name: Create the PostgreSQL data volume
+      ansible.builtin.command: "docker volume create {{ db_volume }}"
+      when: pgvolume_check.rc != 0
+      changed_when: true
+
+    - name: Pull the PostgreSQL image
+      ansible.builtin.command: "docker pull {{ postgres_image }}"
+      register: pg_pull
+      changed_when: "'Downloaded newer image' in pg_pull.stdout"
+
+    - name: Check whether the PostgreSQL container is already running
+      ansible.builtin.command:
+        argv:
+          - docker
+          - inspect
+          - -f
+          - '{% raw %}{{.State.Running}}{% endraw %}'
+          - "{{ db_container }}"
+      register: pg_state
+      changed_when: false
+      failed_when: false
+
+    - name: Remove a stopped or stale PostgreSQL container
+      ansible.builtin.command: "docker rm -f {{ db_container }}"
+      when: pg_state.rc == 0 and pg_state.stdout.strip() != 'true'
+      changed_when: true
+
+    - name: Start the PostgreSQL container
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - -d
+          - --name
+          - "{{ db_container }}"
+          - --network
+          - "{{ docker_network }}"
+          - --restart
+          - unless-stopped
+          - -e
+          - "POSTGRES_DB={{ db_name }}"
+          - -e
+          - "POSTGRES_USER={{ db_user }}"
+          - -e
+          - "POSTGRES_PASSWORD={{ db_password }}"
+          - -v
+          - "{{ db_volume }}:/var/lib/postgresql/data"
+          - --health-cmd
+          - "pg_isready -U {{ db_user }} -d {{ db_name }}"
+          - --health-interval
+          - 10s
+          - --health-retries
+          - "5"
+          - "{{ postgres_image }}"
+      when: pg_state.rc != 0 or pg_state.stdout.strip() != 'true'
+      changed_when: true
+      no_log: true
+
+    - name: Wait for PostgreSQL to accept connections
+      ansible.builtin.command: >-
+        docker exec {{ db_container }} pg_isready -U {{ db_user }} -d {{ db_name }}
+      register: pg_ready
+      until: pg_ready.rc == 0
+      retries: 30
+      delay: 5
+      changed_when: false
+
+    # --- Application ------------------------------------------------------
+    - name: Pull the application image
+      ansible.builtin.command: "docker pull {{ app_image }}"
+      register: app_pull
+      changed_when: "'Downloaded newer image' in app_pull.stdout"
+
+    - name: Resolve the desired application image id
+      ansible.builtin.command:
+        argv:
+          - docker
+          - inspect
+          - -f
+          - '{% raw %}{{.Id}}{% endraw %}'
+          - "{{ app_image }}"
+      register: desired_image
+      changed_when: false
+
+    - name: Resolve the image the running container was started from
+      ansible.builtin.command:
+        argv:
+          - docker
+          - inspect
+          - -f
+          - '{% raw %}{{.Image}}{% endraw %}'
+          - "{{ app_container }}"
+      register: running_image
+      changed_when: false
+      failed_when: false
+
+    - name: Decide whether the application container must be replaced
+      ansible.builtin.set_fact:
+        app_needs_replace: >-
+          {{ running_image.rc != 0
+             or running_image.stdout.strip() != desired_image.stdout.strip()
+             or app_env.changed }}
+
+    - name: Remove the previous application container
+      ansible.builtin.command: "docker rm -f {{ app_container }}"
+      when: app_needs_replace and running_image.rc == 0
+      changed_when: true
+
+    - name: Start the application container
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - -d
+          - --name
+          - "{{ app_container }}"
+          - --network
+          - "{{ docker_network }}"
+          - --restart
+          - unless-stopped
+          - --env-file
+          - "{{ app_dir }}/app.env"
+          - -p
+          - "127.0.0.1:{{ app_port }}:8080"
+          - "{{ app_image }}"
+      when: app_needs_replace
+      changed_when: true
+
+    - name: Wait for the application to answer its health probe
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_port }}/actuator/health"
+        status_code: 200
+      register: app_health
+      until: app_health.status == 200
+      retries: 30
+      delay: 10
+
+    # --- Nginx ------------------------------------------------------------
+    - name: Install nginx
       ansible.builtin.apt:
         name: nginx
         state: present
         update_cache: true
+      register: nginx_install
+      until: nginx_install is succeeded
+      retries: 3
+      delay: 10
 
-    - name: Write Nginx site config
-      ansible.builtin.copy:
-        dest: /etc/nginx/sites-available/idp
-        mode: "0644"
-        content: |
-          upstream idp_app {
-              server 127.0.0.1:{{ app_port }};
-              keepalive 32;
-          }
-
-          server {
-              listen 80;
-              server_name _;
-
-              client_max_body_size 10M;
-
-              add_header X-Frame-Options          "SAMEORIGIN"  always;
-              add_header X-Content-Type-Options   "nosniff"     always;
-              add_header X-XSS-Protection         "1; mode=block" always;
-              add_header Referrer-Policy          "strict-origin" always;
-
-              location / {
-                  proxy_pass         http://idp_app;
-                  proxy_http_version 1.1;
-                  proxy_set_header   Host              $host;
-                  proxy_set_header   X-Real-IP         $remote_addr;
-                  proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
-                  proxy_set_header   X-Forwarded-Proto $scheme;
-                  proxy_set_header   Connection        "";
-                  proxy_read_timeout 60s;
-                  proxy_connect_timeout 10s;
-              }
-
-              location /actuator/health {
-                  proxy_pass         http://idp_app;
-                  proxy_http_version 1.1;
-                  proxy_set_header   Host $host;
-                  access_log         off;
-              }
-
-              location /nginx-status {
-                  stub_status;
-                  allow 127.0.0.1;
-                  deny  all;
-              }
-          }
-      notify: Reload Nginx
-
-    - name: Enable IDP site
-      ansible.builtin.file:
-        src: /etc/nginx/sites-available/idp
-        dest: /etc/nginx/sites-enabled/idp
-        state: link
-      notify: Reload Nginx
-
-    - name: Remove default Nginx site
+    - name: Remove the default nginx site
       ansible.builtin.file:
         path: /etc/nginx/sites-enabled/default
         state: absent
-      notify: Reload Nginx
+      notify: Reload nginx
 
-    - name: Start and enable Nginx
+    - name: Deploy the portal nginx vhost
+      ansible.builtin.template:
+        src: nginx-portal.conf.j2
+        dest: /etc/nginx/sites-available/portal.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload nginx
+
+    - name: Enable the portal nginx vhost
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/portal.conf
+        dest: /etc/nginx/sites-enabled/portal.conf
+        state: link
+      notify: Reload nginx
+
+    # Validate the assembled configuration once the vhost is linked in.
+    # A syntax error fails here rather than taking nginx down on reload.
+    - name: Validate the assembled nginx configuration
+      ansible.builtin.command: nginx -t
+      register: nginx_syntax
+      changed_when: false
+
+    - name: Ensure nginx is running and enabled
       ansible.builtin.service:
         name: nginx
         state: started
         enabled: true
 
-    # ─── Docker login to GHCR ───────────────────────────────────────────────
-    - name: Log in to GHCR
-      ansible.builtin.shell:
-        cmd: "echo '{{ github_token }}' | docker login ghcr.io -u github-actions --password-stdin"
-      no_log: true
-      changed_when: true
+    - name: Apply pending handlers before verification
+      ansible.builtin.meta: flush_handlers
 
-    # ─── Ensure app directory exists ────────────────────────────────────────
-    - name: Ensure app directory exists
-      ansible.builtin.file:
-        path: "{{ app_dir }}"
-        state: directory
-        owner: "{{ app_user }}"
-        group: "{{ app_user }}"
-        mode: "0750"
-
-    # ─── Environment file ───────────────────────────────────────────────────
-    - name: Write application .env file
-      ansible.builtin.copy:
-        dest: "{{ env_file }}"
-        owner: "{{ app_user }}"
-        group: "{{ app_user }}"
-        mode: "0600"
-        content: |
-          DB_HOST={{ db_host }}
-          DB_PORT={{ db_port }}
-          DB_NAME={{ db_name }}
-          DB_USERNAME={{ db_username }}
-          DB_PASSWORD={{ db_password }}
-          JWT_SECRET={{ jwt_secret }}
-          SPRING_PROFILES_ACTIVE={{ spring_profile }}
-          PORT={{ app_port }}
-      no_log: true
-
-    # ─── Pull latest image ───────────────────────────────────────────────────
-    - name: Pull Docker image
-      ansible.builtin.shell:
-        cmd: "docker pull {{ docker_image }}"
-      register: docker_pull_result
-      changed_when: "'Status: Downloaded newer image' in docker_pull_result.stdout or 'Pulled' in docker_pull_result.stdout"
-
-    # ─── Stop existing container if running ─────────────────────────────────
-    - name: Stop and remove existing container
-      ansible.builtin.shell:
-        cmd: "docker rm -f {{ container_name }}"
-      register: docker_rm_result
-      changed_when: docker_rm_result.rc == 0
-      failed_when: docker_rm_result.rc != 0 and 'No such container' not in docker_rm_result.stderr
-
-    # ─── Start application container ─────────────────────────────────────────
-    - name: Start application container
-      ansible.builtin.shell:
-        cmd: >
-          docker run -d
-          --name {{ container_name }}
-          --restart unless-stopped
-          --env-file {{ env_file }}
-          --network host
-          --log-driver json-file
-          --log-opt max-size=100m
-          --log-opt max-file=3
-          --health-cmd "curl -sf http://localhost:{{ app_port }}/actuator/health || exit 1"
-          --health-interval 30s
-          --health-timeout 10s
-          --health-retries 3
-          {{ docker_image }}
-      register: docker_run_result
-      changed_when: docker_run_result.rc == 0
-
-    # ─── Wait for health check ──────────────────────────────────────────────
-    - name: Wait for application to become healthy
+    # --- Verification -----------------------------------------------------
+    - name: Verify the portal is reachable through nginx
       ansible.builtin.uri:
-        url: "http://localhost:{{ app_port }}/actuator/health"
-        method: GET
+        url: "http://127.0.0.1/actuator/health"
         status_code: 200
-        timeout: 10
-      register: health_result
-      retries: "{{ health_check_retries }}"
-      delay: "{{ health_check_delay }}"
-      until: health_result.status == 200
+        return_content: true
+      register: proxied_health
+      until: proxied_health.status == 200
+      retries: 12
+      delay: 5
 
-    # ─── Final verification ─────────────────────────────────────────────────
-    - name: Verify Nginx proxy health
-      ansible.builtin.uri:
-        url: "http://localhost:{{ nginx_port }}/actuator/health"
-        method: GET
-        status_code: 200
-      register: nginx_health
-
-    - name: Print deployment summary
+    - name: Report the health payload
       ansible.builtin.debug:
-        msg:
-          - "✅ Application deployed successfully"
-          - "   Image    : {{ docker_image }}"
-          - "   Container: {{ container_name }}"
-          - "   App health: {{ health_result.json.status }}"
-          - "   Nginx HTTP: {{ nginx_health.status }}"
+        msg: "Portal health via nginx: {{ proxied_health.content }}"
 
   handlers:
-    - name: Reload Nginx
+    - name: Reload nginx
       ansible.builtin.service:
         name: nginx
         state: reloaded

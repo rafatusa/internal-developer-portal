@@ -1,0 +1,32 @@
+# Build output
+target/
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# VCS and CI
+.git/
+.github/
+.gitignore
+.gitattributes
+
+# Platform artifacts
+.udap/
+infra/
+ansible/
+puppet/
+docs/
+tests/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Editors and OS noise
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+# Reports
+k6-summary.json

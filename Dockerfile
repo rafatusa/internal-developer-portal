@@ -1,47 +1,43 @@
-# ─── Stage 1: Build ───────────────────────────────────────────────────────────
+# syntax=docker/dockerfile:1
+
+# ---------- build stage ----------
 FROM eclipse-temurin:21-jdk-jammy AS builder
 
 WORKDIR /build
 
-# Cache Maven dependencies first (separate layer)
-COPY pom.xml .
-COPY .mvn .mvn
-COPY mvnw .
-RUN chmod +x mvnw && ./mvnw dependency:go-offline -q
+# Dependency layer: changes far less often than application source.
+COPY .mvn/ .mvn/
+COPY mvnw pom.xml ./
+RUN chmod +x mvnw && ./mvnw -B -ntp dependency:go-offline
 
-# Copy source and build
-COPY src ./src
-RUN ./mvnw package -DskipTests -q \
-    && mv target/*.jar target/app.jar
+# Application layer.
+COPY src/ src/
+RUN ./mvnw -B -ntp clean package -DskipTests \
+    && mv target/*.jar /build/app.jar
 
-# ─── Stage 2: Runtime ─────────────────────────────────────────────────────────
-FROM eclipse-temurin:21-jre-jammy AS runtime
+# ---------- runtime stage ----------
+FROM eclipse-temurin:21-jre-jammy
 
-# Security: run as non-root
-RUN groupadd -r idpapp && useradd -r -g idpapp -s /bin/false idpapp
+# curl is required by the container HEALTHCHECK below.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Unprivileged runtime user (CIS Docker 4.1).
+RUN groupadd --gid 1500 portal \
+    && useradd --uid 1500 --gid portal --shell /usr/sbin/nologin --create-home portal
 
 WORKDIR /app
+COPY --from=builder --chown=portal:portal /build/app.jar /app/app.jar
 
-# Copy artifact from builder
-COPY --from=builder /build/target/app.jar app.jar
+USER portal
 
-# Allow the app to write logs to /app/logs
-RUN mkdir -p /app/logs && chown -R idpapp:idpapp /app
-
-USER idpapp
-
-# Expose application port
 EXPOSE 8080
 
-# JVM tuning for containers
-ENV JAVA_OPTS="-XX:+UseContainerSupport \
-               -XX:MaxRAMPercentage=75.0 \
-               -XX:+UseG1GC \
-               -XX:+UseStringDeduplication \
-               -Djava.security.egd=file:/dev/./urandom \
-               -Dspring.backgroundpreinitializer.ignore=true"
+ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=70.0"
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-  CMD curl -sf http://localhost:8080/actuator/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD curl --fail --silent http://127.0.0.1:8080/actuator/health || exit 1
 
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
+# Exec form: the JVM is PID 1 and receives SIGTERM directly for clean shutdown.
+ENTRYPOINT ["java", "-jar", "/app/app.jar"]

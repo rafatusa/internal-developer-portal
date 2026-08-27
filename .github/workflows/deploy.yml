@@ -6,7 +6,6 @@ name: deploy
 jobs:
   lint:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
     steps:
     - uses: actions/checkout@v4
     - name: Set up Java 21
@@ -16,14 +15,13 @@ jobs:
         distribution: temurin
         cache: maven
     - name: Checkstyle
-      run: mvn -B checkstyle:check -Dcheckstyle.failsOnError=true --no-transfer-progress
+      run: mvn checkstyle:check -f pom.xml
     - name: SpotBugs
-      run: mvn -B spotbugs:check --no-transfer-progress
-  test_unit:
+      run: mvn spotbugs:check -f pom.xml
+  test:
     runs-on: ubuntu-latest
     needs:
     - lint
-    timeout-minutes: 20
     steps:
     - uses: actions/checkout@v4
     - name: Set up Java 21
@@ -32,48 +30,14 @@ jobs:
         java-version: '21'
         distribution: temurin
         cache: maven
-    - name: Run unit tests
-      run: mvn -B test --no-transfer-progress
-      env:
-        SPRING_PROFILES_ACTIVE: test
-    - name: Upload unit test report
-      uses: actions/upload-artifact@v4
-      with:
-        name: unit-test-results
-        path: target/surefire-reports/
-  test_integration:
-    runs-on: ubuntu-latest
-    needs:
-    - test_unit
-    timeout-minutes: 30
-    steps:
-    - uses: actions/checkout@v4
-    - name: Set up Java 21
-      uses: actions/setup-java@v4
-      with:
-        java-version: '21'
-        distribution: temurin
-        cache: maven
-    - name: Run integration tests
-      run: 'mvn -B package -DskipTests --no-transfer-progress
-
-        mvn -B failsafe:integration-test failsafe:verify --no-transfer-progress ||
-        true
-
-        '
-      env:
-        SPRING_PROFILES_ACTIVE: integration-test
-    - name: Upload integration test report
-      uses: actions/upload-artifact@v4
-      with:
-        name: integration-test-results
-        path: target/failsafe-reports/
-        if-no-files-found: ignore
+    - name: Unit tests
+      run: mvn test -f pom.xml
+    - name: Integration tests
+      run: mvn verify -Pfailsafe -f pom.xml
   security:
     runs-on: ubuntu-latest
     needs:
     - lint
-    timeout-minutes: 30
     steps:
     - uses: actions/checkout@v4
     - name: Set up Java 21
@@ -82,24 +46,13 @@ jobs:
         java-version: '21'
         distribution: temurin
         cache: maven
-    - name: OWASP Dependency Check
-      run: "mvn -B org.owasp:dependency-check-maven:check \\\n  -DfailBuildOnCVSS=10\
-        \ \\\n  -DautoUpdate=false \\\n  -DsuppressionFile=owasp-suppressions.xml\
-        \ \\\n  --no-transfer-progress || true\n"
-      env:
-        NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-    - name: Upload OWASP report
-      uses: actions/upload-artifact@v4
-      with:
-        name: owasp-dependency-check-report
-        path: target/dependency-check-report.html
-        if-no-files-found: ignore
+    - name: OWASP dependency check
+      run: mvn org.owasp:dependency-check-maven:check -f pom.xml
   build_push:
     runs-on: ubuntu-latest
     needs:
-    - test_unit
+    - test
     - security
-    timeout-minutes: 20
     steps:
     - uses: actions/checkout@v4
     - name: Set up Java 21
@@ -108,30 +61,21 @@ jobs:
         java-version: '21'
         distribution: temurin
         cache: maven
-    - name: Build Maven artifact
-      run: mvn -B package -DskipTests --no-transfer-progress
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+    - name: Build JAR
+      run: mvn package -DskipTests -f pom.xml
     - name: Log in to GHCR
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-    - id: docker_build
-      name: Build and push Docker image
-      uses: docker/build-push-action@v6
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
       with:
         context: .
         push: true
-        tags: 'ghcr.io/${{ github.repository_owner }}/internal-developer-portal:${{
-          github.sha }}
-
-          ghcr.io/${{ github.repository_owner }}/internal-developer-portal:latest
-
-          '
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+        tags: ghcr.io/${{ github.repository }}:${{ github.sha }},ghcr.io/${{ github.repository
+          }}:latest
   provision:
     runs-on: ubuntu-latest
     needs:
@@ -144,34 +88,19 @@ jobs:
       TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
       TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
       TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET }}
-    timeout-minutes: 30
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Terraform
+    - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: 1.9.8
-    - name: Terraform Init
+    - name: Terraform init
       run: "terraform init -input=false -reconfigure \\\n  -backend-config=\"bucket=${{\
         \ secrets.TF_STATE_BUCKET }}\" \\\n  -backend-config=\"key=${{ secrets.PROJECT_NAME\
         \ }}/terraform.tfstate\" \\\n  -backend-config=\"region=us-east-1\"\n"
       working-directory: infra
-    - name: Terraform Validate
-      run: terraform validate
+    - name: Terraform apply
+      run: terraform apply -input=false -auto-approve
       working-directory: infra
-    - name: Terraform Plan
-      run: terraform plan -input=false -out=tfplan
-      working-directory: infra
-    - name: Terraform Apply
-      run: terraform apply -input=false tfplan
-      working-directory: infra
-    - id: tf_outputs
-      name: Capture EC2 IP
-      run: 'echo "ec2_ip=$(terraform output -raw elastic_ip)" >> "$GITHUB_OUTPUT"
-
-        '
-      working-directory: infra
-  puppet_bootstrap:
+  puppet-bootstrap:
     runs-on: ubuntu-latest
     needs:
     - provision
@@ -179,21 +108,21 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_REGION: us-east-1
-    timeout-minutes: 30
+      TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
+      TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+      TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+      TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET }}
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Terraform (for output read)
+    - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: 1.9.8
-    - name: Terraform Init (read state)
+    - id: get_ip
+      name: Get instance IP
       run: "terraform init -input=false -reconfigure \\\n  -backend-config=\"bucket=${{\
         \ secrets.TF_STATE_BUCKET }}\" \\\n  -backend-config=\"key=${{ secrets.PROJECT_NAME\
-        \ }}/terraform.tfstate\" \\\n  -backend-config=\"region=us-east-1\"\n"
-      working-directory: infra
-    - id: get_ip
-      name: Get EC2 IP
-      run: echo "ec2_ip=$(terraform output -raw elastic_ip)" >> "$GITHUB_OUTPUT"
+        \ }}/terraform.tfstate\" \\\n  -backend-config=\"region=us-east-1\"\necho\
+        \ \"ip=$(terraform output -raw instance_public_ip)\" >> \"$GITHUB_OUTPUT\"\
+        \n"
       working-directory: infra
     - name: Write SSH key
       run: 'mkdir -p ~/.ssh
@@ -202,52 +131,54 @@ jobs:
 
         chmod 600 ~/.ssh/deploy_key
 
-        ssh-keyscan -H "${{ steps.get_ip.outputs.ec2_ip }}" >> ~/.ssh/known_hosts
+        ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
 
         '
       env:
         SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-    - name: Install Puppet agent on server
-      run: "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new \\\n  ${{\
-        \ secrets.SSH_USER }}@${{ steps.get_ip.outputs.ec2_ip }} \\\n  'wget -q https://apt.puppetlabs.com/puppet8-release-jammy.deb\
-        \ && \\\n   sudo dpkg -i puppet8-release-jammy.deb && \\\n   sudo apt-get\
-        \ update -q && \\\n   sudo apt-get install -y puppet-agent && \\\n   sudo\
-        \ /opt/puppetlabs/bin/puppet --version'\n"
-    - name: Copy Puppet manifests to server
-      run: "scp -i ~/.ssh/deploy_key -r puppet/ \\\n  ${{ secrets.SSH_USER }}@${{\
-        \ steps.get_ip.outputs.ec2_ip }}:/tmp/puppet_manifests\n"
-    - name: Apply Puppet bootstrap manifest
-      run: "ssh -i ~/.ssh/deploy_key \\\n  ${{ secrets.SSH_USER }}@${{ steps.get_ip.outputs.ec2_ip\
-        \ }} \\\n  'sudo /opt/puppetlabs/bin/puppet apply /tmp/puppet_manifests/manifests/site.pp\
-        \ \\\n   --modulepath=/tmp/puppet_manifests/modules 2>&1'\n"
+        HOST: ${{ steps.get_ip.outputs.ip }}
+    - name: Wait for SSH
+      run: "for i in $(seq 1 20); do\n  ssh -i ~/.ssh/deploy_key -o ConnectTimeout=5\
+        \ -o BatchMode=yes \\\n    \"$DEPLOY_USER@$HOST\" echo \"ready\" && break\n\
+        \  echo \"Attempt $i: SSH not ready, retrying in 15s...\"\n  sleep 15\ndone\n"
+      env:
+        HOST: ${{ steps.get_ip.outputs.ip }}
+        DEPLOY_USER: ${{ secrets.SSH_USER }}
+    - name: Copy Puppet manifests
+      run: scp -i ~/.ssh/deploy_key -r puppet/ "$DEPLOY_USER@$HOST:/tmp/puppet-manifests"
+      env:
+        HOST: ${{ steps.get_ip.outputs.ip }}
+        DEPLOY_USER: ${{ secrets.SSH_USER }}
+    - name: Run Puppet bootstrap
+      run: "ssh -i ~/.ssh/deploy_key \"$DEPLOY_USER@$HOST\" \\\n  \"sudo DEPLOY_USER=$DEPLOY_USER\
+        \ bash /tmp/puppet-manifests/bootstrap.sh\"\n"
+      env:
+        HOST: ${{ steps.get_ip.outputs.ip }}
+        DEPLOY_USER: ${{ secrets.SSH_USER }}
   configure:
     runs-on: ubuntu-latest
     needs:
-    - puppet_bootstrap
+    - puppet-bootstrap
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_REGION: us-east-1
-    timeout-minutes: 30
+      TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
+      TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+      TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+      TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET }}
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Terraform (for output read)
+    - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: 1.9.8
-    - name: Terraform Init (read state)
+    - id: get_ip
+      name: Get instance IP
       run: "terraform init -input=false -reconfigure \\\n  -backend-config=\"bucket=${{\
         \ secrets.TF_STATE_BUCKET }}\" \\\n  -backend-config=\"key=${{ secrets.PROJECT_NAME\
-        \ }}/terraform.tfstate\" \\\n  -backend-config=\"region=us-east-1\"\n"
+        \ }}/terraform.tfstate\" \\\n  -backend-config=\"region=us-east-1\"\necho\
+        \ \"ip=$(terraform output -raw instance_public_ip)\" >> \"$GITHUB_OUTPUT\"\
+        \n"
       working-directory: infra
-    - id: get_ip
-      name: Get EC2 IP
-      run: echo "ec2_ip=$(terraform output -raw elastic_ip)" >> "$GITHUB_OUTPUT"
-      working-directory: infra
-    - name: Install Ansible
-      run: pip install ansible-core ansible
-    - name: Install Ansible collections
-      run: ansible-galaxy collection install community.general community.docker
     - name: Write SSH key
       run: 'mkdir -p ~/.ssh
 
@@ -255,31 +186,36 @@ jobs:
 
         chmod 600 ~/.ssh/deploy_key
 
-        ssh-keyscan -H "${{ steps.get_ip.outputs.ec2_ip }}" >> ~/.ssh/known_hosts
+        ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
 
         '
       env:
         SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-    - name: Generate inventory
-      run: 'cat > /tmp/inventory.ini <<EOF
+        HOST: ${{ steps.get_ip.outputs.ip }}
+    - name: Install Ansible
+      run: 'pipx install ansible-core
 
-        [idp_servers]
-
-        ${{ steps.get_ip.outputs.ec2_ip }} ansible_user=${{ secrets.SSH_USER }} ansible_ssh_private_key_file=~/.ssh/deploy_key
-        ansible_ssh_common_args=''-o StrictHostKeyChecking=accept-new''
-
-        EOF
+        ansible --version
 
         '
     - name: Run Ansible playbook
-      run: "ansible-playbook -i /tmp/inventory.ini ansible/site.yml \\\n  --extra-vars\
-        \ \"docker_image=ghcr.io/${{ github.repository_owner }}/internal-developer-portal:${{\
-        \ github.sha }}\" \\\n  --extra-vars \"db_password=${{ secrets.DB_PASSWORD\
-        \ }}\" \\\n  --extra-vars \"jwt_secret=${{ secrets.JWT_SECRET }}\" \\\n  --extra-vars\
-        \ \"github_token=${{ secrets.GITHUB_TOKEN }}\"\n"
+      run: "ansible-playbook playbook.yml \\\n  -i \"$HOST,\" \\\n  --private-key\
+        \ ~/.ssh/deploy_key \\\n  -u \"$DEPLOY_USER\" \\\n  -e \"db_password=$DB_PASSWORD\"\
+        \ \\\n  -e \"jwt_secret=$JWT_SECRET\" \\\n  -e \"admin_username=admin\" \\\
+        \n  -e \"admin_password=$ADMIN_PASSWORD\" \\\n  -e \"image_tag=$IMAGE_TAG\"\
+        \ \\\n  -e \"ghcr_user=$GHCR_USER\" \\\n  -e \"ghcr_token=$GHCR_TOKEN\" \\\
+        \n  -e \"repo=$REPO\"\n"
+      working-directory: ansible
       env:
-        ANSIBLE_HOST_KEY_CHECKING: 'False'
-        ANSIBLE_FORCE_COLOR: '1'
+        HOST: ${{ steps.get_ip.outputs.ip }}
+        DEPLOY_USER: ${{ secrets.SSH_USER }}
+        DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+        IMAGE_TAG: ${{ github.sha }}
+        GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GHCR_USER: ${{ github.actor }}
+        REPO: ${{ github.repository }}
   verify:
     runs-on: ubuntu-latest
     needs:
@@ -288,44 +224,79 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_REGION: us-east-1
-    timeout-minutes: 15
+      TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
+      TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+      TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+      TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET }}
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Terraform (for output read)
+    - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: 1.9.8
-    - name: Terraform Init (read state)
+    - id: get_ip
+      name: Get instance IP
       run: "terraform init -input=false -reconfigure \\\n  -backend-config=\"bucket=${{\
         \ secrets.TF_STATE_BUCKET }}\" \\\n  -backend-config=\"key=${{ secrets.PROJECT_NAME\
-        \ }}/terraform.tfstate\" \\\n  -backend-config=\"region=us-east-1\"\n"
+        \ }}/terraform.tfstate\" \\\n  -backend-config=\"region=us-east-1\"\necho\
+        \ \"ip=$(terraform output -raw instance_public_ip)\" >> \"$GITHUB_OUTPUT\"\
+        \n"
       working-directory: infra
+    - name: Health check
+      run: "curl --fail --retry 12 --retry-delay 15 --retry-all-errors \\\n  \"http://$HOST/actuator/health\"\
+        \n"
+      env:
+        HOST: ${{ steps.get_ip.outputs.ip }}
+    - name: Verify OpenAPI document is served
+      run: "curl --fail --retry 6 --retry-delay 10 --retry-all-errors \\\n  \"http://$HOST/v3/api-docs\"\
+        \ -o openapi.json\necho \"OpenAPI document retrieved ($(wc -c < openapi.json)\
+        \ bytes)\"\n"
+      env:
+        HOST: ${{ steps.get_ip.outputs.ip }}
+    - name: Upload OpenAPI document
+      uses: actions/upload-artifact@v4
+      with:
+        name: openapi-spec
+        path: openapi.json
+  perf:
+    runs-on: ubuntu-latest
+    needs:
+    - verify
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: us-east-1
+      TF_VAR_project_name: ${{ secrets.PROJECT_NAME }}
+      TF_VAR_ssh_public_key: ${{ secrets.SSH_PUBLIC_KEY }}
+      TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+      TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
     - id: get_ip
-      name: Get EC2 IP
-      run: echo "ec2_ip=$(terraform output -raw elastic_ip)" >> "$GITHUB_OUTPUT"
+      name: Get instance IP
+      run: "terraform init -input=false -reconfigure \\\n  -backend-config=\"bucket=${{\
+        \ secrets.TF_STATE_BUCKET }}\" \\\n  -backend-config=\"key=${{ secrets.PROJECT_NAME\
+        \ }}/terraform.tfstate\" \\\n  -backend-config=\"region=us-east-1\"\necho\
+        \ \"ip=$(terraform output -raw instance_public_ip)\" >> \"$GITHUB_OUTPUT\"\
+        \n"
       working-directory: infra
-    - name: Wait for application health
-      run: "echo \"Waiting for /actuator/health on http://${{ steps.get_ip.outputs.ec2_ip\
-        \ }}/actuator/health ...\"\ncurl --fail --retry 20 --retry-delay 15 --retry-all-errors\
-        \ \\\n  http://${{ steps.get_ip.outputs.ec2_ip }}/actuator/health\n"
-    - name: Print deployment summary
-      run: 'echo "========================================="
+    - name: Install k6
+      run: 'curl -fsSL https://github.com/grafana/k6/releases/download/v0.54.0/k6-v0.54.0-linux-amd64.tar.gz
+        -o k6.tar.gz
 
-        echo " Internal Developer Portal - DEPLOYED"
+        tar xzf k6.tar.gz
 
-        echo "========================================="
-
-        echo " URL: http://${{ steps.get_ip.outputs.ec2_ip }}"
-
-        echo " API: http://${{ steps.get_ip.outputs.ec2_ip }}/api/v1"
-
-        echo " Swagger: http://${{ steps.get_ip.outputs.ec2_ip }}/swagger-ui.html"
-
-        echo " Health: http://${{ steps.get_ip.outputs.ec2_ip }}/actuator/health"
-
-        echo " Image: ghcr.io/${{ github.repository_owner }}/internal-developer-portal:${{
-        github.sha }}"
-
-        echo "========================================="
+        sudo mv k6-v0.54.0-linux-amd64/k6 /usr/local/bin/k6
 
         '
+    - name: Run k6 performance tests
+      run: k6 run tests/k6/performance.js
+      env:
+        BASE_URL: http://${{ steps.get_ip.outputs.ip }}
+        ADMIN_USERNAME: admin
+        ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+    - name: Upload k6 summary
+      uses: actions/upload-artifact@v4
+      with:
+        name: k6-performance-summary
+        path: k6-summary.json
